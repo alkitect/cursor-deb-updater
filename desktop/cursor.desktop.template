@@ -1,0 +1,27 @@
+[Desktop Entry]
+Name=Cursor
+Comment=The AI Code Editor.
+GenericName=Text Editor
+Exec=@BIN@/cursor-deb-updater
+Icon=co.anysphere.cursor
+Type=Application
+Terminal=false
+StartupNotify=false
+StartupWMClass=Cursor
+Categories=TextEditor;Development;IDE;
+MimeType=application/x-cursor-workspace;
+Actions=terminal-updates;silent-updates;new-empty-window;
+Keywords=cursor;
+
+[Desktop Action terminal-updates]
+Name=Show terminal on updates
+Exec=@BIN@/cursor-deb-updater-ui terminal
+
+[Desktop Action silent-updates]
+Name=Use silent updates
+Exec=@BIN@/cursor-deb-updater-ui silent
+
+[Desktop Action new-empty-window]
+Name=New Empty Window
+Exec=/usr/share/cursor/cursor --new-window %F
+Icon=co.anysphere.cursor

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Mock dpkg/dpkg-query for CI (package name from CURSOR_DEB_UPDATER_TEST_PACKAGE).
+set -euo pipefail
+
+pkg="${CURSOR_DEB_UPDATER_TEST_PACKAGE:-cursor}"
+base="$(basename "$0")"
+
+case "$base" in
+  dpkg)
+    case "${1:-}" in
+      -S)
+        printf '%s: %s\n' "$pkg" "${2:-/usr/share/cursor/cursor}"
+        ;;
+      -i)
+        exit 0
+        ;;
+      -L)
+        if [ "$pkg" = cursor ]; then
+          echo /usr/share/applications/cursor.desktop
+          echo /usr/share/cursor/cursor
+        fi
+        ;;
+      *)
+        exit 1
+        ;;
+    ;;
+  dpkg-query)
+    case "${1:-}" in
+      -s)
+        if [ "${2:-}" = cursor ] && [ "$pkg" = cursor ]; then
+          echo "Package: cursor"
+          echo "Status: install ok installed"
+          exit 0
+        fi
+        echo "dpkg-query: package '${2:-}' is not installed" >&2
+        exit 1
+        ;;
+      *)
+        exit 1
+        ;;
+    esac
+    ;;
+  *)
+    exit 1
+    ;;
+esac

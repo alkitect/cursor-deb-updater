@@ -1,0 +1,628 @@
+#!/usr/bin/env bash
+# Unofficial helper: update the official Cursor Linux .deb and relaunch via the desktop session.
+set -euo pipefail
+
+SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CDU_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/cursor-deb-updater"
+if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
+  CDU_LIB_DIR="${SCRIPT_DIR}/lib"
+elif [[ -f "${CDU_DATA_DIR}/common.sh" ]]; then
+  CDU_LIB_DIR="${CDU_DATA_DIR}"
+else
+  printf '[cursor-deb-updater] ERROR: lib helpers not found (re-run install-to-local.sh)\n' >&2
+  exit 1
+fi
+# shellcheck source=lib/common.sh
+source "${CDU_LIB_DIR}/common.sh"
+# shellcheck source=lib/allowlist.sh
+source "${CDU_LIB_DIR}/allowlist.sh"
+# shellcheck source=lib/packaging-gate.sh
+source "${CDU_LIB_DIR}/packaging-gate.sh"
+
+CURSOR_UPDATE_VERBOSE="${CURSOR_UPDATE_VERBOSE:-0}"
+CU_LAUNCH_OK=1
+DRY_RUN=0
+CURSOR_BINARY_PATH="/usr/share/cursor/cursor"
+REOPEN_ENV=()
+REOPEN_ENV_VARS=(DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS XAUTHORITY XDG_SESSION_TYPE XDG_CURRENT_DESKTOP)
+TARGET_USER=""
+TARGET_HOME=""
+
+GIO_BIN="$(command -v gio 2>/dev/null || true)"
+[ -z "$GIO_BIN" ] && [ -x /usr/bin/gio ] && GIO_BIN=/usr/bin/gio
+GTK_LAUNCH_BIN="$(command -v gtk-launch 2>/dev/null || true)"
+[ -z "$GTK_LAUNCH_BIN" ] && [ -x /usr/bin/gtk-launch ] && GTK_LAUNCH_BIN=/usr/bin/gtk-launch
+CURL_BIN="$(command -v curl 2>/dev/null || true)"
+[ -z "$CURL_BIN" ] && [ -x /usr/bin/curl ] && CURL_BIN=/usr/bin/curl
+WGET_BIN="$(command -v wget 2>/dev/null || true)"
+[ -z "$WGET_BIN" ] && [ -x /usr/bin/wget ] && WGET_BIN=/usr/bin/wget
+
+for _arg in "$@"; do
+  case "$_arg" in
+    --dry-run) DRY_RUN=1 ;;
+  esac
+done
+
+verify_installer_sudo() {
+  if [ "$CURSOR_UPDATE_VERBOSE" = 1 ]; then
+    sudo -n --preserve-env=CURSOR_UPDATE_VERBOSE "$SCRIPT_PATH" --verify-sudo 2>/dev/null
+  else
+    sudo -n "$SCRIPT_PATH" --verify-sudo 2>/dev/null
+  fi
+}
+
+cu_sudo_installer() {
+  if verify_installer_sudo; then
+    if [ "$CURSOR_UPDATE_VERBOSE" = 1 ]; then
+      sudo -n --preserve-env=CURSOR_UPDATE_VERBOSE "$@"
+    else
+      sudo -n "$@"
+    fi
+    return $?
+  fi
+  if cdu_interactive_tty; then
+    if [ "$CURSOR_UPDATE_VERBOSE" = 1 ]; then
+      sudo --preserve-env=CURSOR_UPDATE_VERBOSE "$@"
+    else
+      sudo "$@"
+    fi
+    return $?
+  fi
+  cdu_err "Passwordless sudo is not configured and no TTY is available."
+  cdu_err "Run from a terminal (sudo may prompt) or enable passwordless sudo:"
+  cdu_err "  ${HOME}/.local/bin/setup-passwordless-sudo.sh"
+  return 1
+}
+
+auto_close_terminal() {
+  local sec="${CURSOR_UPDATE_TERMINAL_CLOSE_SEC:-3}" s
+  [ -t 1 ] || return 0
+  [ "$sec" = 0 ] && return 0
+  printf '\n'
+  if [ "$CU_LAUNCH_OK" = 0 ]; then
+    cdu_err "Cursor did not start successfully."
+    read -r -p "[cursor-deb-updater] Press Enter to close…" _ || true
+    return 0
+  fi
+  for ((s = sec; s >= 1; s--)); do
+    printf '\r[cursor-deb-updater] Closing in %s…' "$s"
+    sleep 1
+  done
+  printf '\n'
+}
+
+fetch_cursor_release_json() {
+  local url json track platform
+  track="$(cdu_read_release_track)"
+  platform="$(cdu_platform_slug)" || return 1
+
+  if [ "${CURSOR_DEB_UPDATER_TEST_MODE:-0}" = 1 ]; then
+    printf '{"version":"%s","debUrl":"%s"}' \
+      "${CURSOR_DEB_UPDATER_TEST_LATEST:-9.9.9}" \
+      "${CURSOR_DEB_UPDATER_TEST_DEB_URL:-https://downloads.cursor.com/test/cursor_test_amd64.deb}"
+    return 0
+  fi
+
+  while IFS= read -r url; do
+    case "$url" in
+      *releaseTrack=*)
+        [[ "$url" == *"releaseTrack=${track}"* ]] || continue
+        ;;
+      */api/download/${track}/*)
+        ;;
+      *) continue ;;
+    esac
+    json="$([ -n "$CURL_BIN" ] && "$CURL_BIN" -fsSL --connect-timeout 10 --max-time 30 "$url" 2>/dev/null || true)"
+    if [ -n "$json" ] && printf '%s' "$json" | grep -q '"version"'; then
+      printf '%s' "$json"
+      return 0
+    fi
+  done < <(cdu_release_api_urls)
+  return 1
+}
+
+resolve_deb_url_from_json() {
+  local json="$1"
+  local deb_url version commit_sha major_minor deb_arch platform_path
+
+  deb_url="$(cdu_json_field "$json" debUrl)"
+  if [ -n "$deb_url" ]; then
+    printf '%s' "$deb_url"
+    return 0
+  fi
+
+  version="$(cdu_json_field "$json" version)"
+  commit_sha="$(cdu_json_field "$json" commitSha)"
+  deb_arch="$(cdu_deb_arch || echo amd64)"
+  case "$(uname -m)" in
+    x86_64) platform_path="linux/x64/deb/amd64/deb" ;;
+    aarch64) platform_path="linux/arm64/deb/arm64/deb" ;;
+    *) platform_path="linux/x64/deb/amd64/deb" ;;
+  esac
+
+  if [ -n "$version" ] && [ -n "$commit_sha" ]; then
+    printf '%s' "https://downloads.cursor.com/production/${commit_sha}/${platform_path}/cursor_${version}_${deb_arch}.deb"
+    return 0
+  fi
+
+  if [ -n "$version" ]; then
+    major_minor="$(printf '%s' "$version" | grep -oE '^[0-9]+\.[0-9]+' || true)"
+    if [ -n "$major_minor" ]; then
+      printf '%s' "https://api2.cursor.sh/updates/download/golden/$(cdu_platform_slug)-deb/cursor/${major_minor}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+resolve_deb_download_url() {
+  local new_norm="${1:-}" json deb_url
+  if [ -n "${DEB_URL_PASS:-}" ]; then
+    printf '%s' "$DEB_URL_PASS"
+    return 0
+  fi
+  json="$(fetch_cursor_release_json || true)"
+  if [ -n "$json" ]; then
+    deb_url="$(resolve_deb_url_from_json "$json" || true)"
+    if [ -n "$deb_url" ]; then
+      printf '%s' "$deb_url"
+      return 0
+    fi
+  fi
+  if [ -n "$new_norm" ]; then
+    local major_minor
+    major_minor="$(printf '%s' "$new_norm" | grep -oE '^[0-9]+\.[0-9]+' || true)"
+    if [ -n "$major_minor" ]; then
+      printf '%s' "https://api2.cursor.sh/updates/download/golden/$(cdu_platform_slug)-deb/cursor/${major_minor}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+integrated_desktop_enabled() {
+  local home="${1:-$HOME}"
+  local desktop="${home}/.local/share/applications/cursor.desktop"
+  [ -f "${CDU_INTEGRATED_MARKER}" ] && return 0
+  [ -f "$desktop" ] && grep -q 'cursor-deb-updater' "$desktop" 2>/dev/null
+}
+
+desktop_main_exec_is_updater() {
+  local path="$1" line section=""
+  [ -f "$path" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "[Desktop Entry]") section=main ;;
+      "["*) [ "$line" != "[Desktop Entry]" ] && section="" ;;
+    esac
+    if [ "$section" = main ] && [ "${line#Exec=}" != "$line" ]; then
+      case "${line#Exec=}" in
+        *cursor-deb-updater*) return 0 ;;
+      esac
+    fi
+  done < "$path"
+  return 1
+}
+
+build_reopen_env() {
+  local mode="${1:-env}" var val
+  REOPEN_ENV=()
+  case "$mode" in
+    env)
+      for var in "${REOPEN_ENV_VARS[@]}"; do
+        val="${!var:-}"
+        [ -n "$val" ] && REOPEN_ENV+=("${var}=${val}")
+      done
+      ;;
+    positional)
+      [ -n "${WAYLAND_DISPLAY_PASS:-}" ] && REOPEN_ENV+=(WAYLAND_DISPLAY="$WAYLAND_DISPLAY_PASS")
+      [ -n "${XDG_RUNTIME_DIR_PASS:-}" ] && REOPEN_ENV+=(XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR_PASS")
+      [ -n "${DBUS_SESSION_BUS_ADDRESS_PASS:-}" ] && REOPEN_ENV+=(DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS_PASS")
+      [ -n "${DISPLAY_PASS:-}" ] && REOPEN_ENV+=(DISPLAY="$DISPLAY_PASS")
+      [ -n "${XAUTHORITY_PASS:-}" ] && REOPEN_ENV+=(XAUTHORITY="$XAUTHORITY_PASS")
+      [ -n "${XDG_SESSION_TYPE_PASS:-}" ] && REOPEN_ENV+=(XDG_SESSION_TYPE="$XDG_SESSION_TYPE_PASS")
+      [ -n "${XDG_CURRENT_DESKTOP_PASS:-}" ] && REOPEN_ENV+=(XDG_CURRENT_DESKTOP="$XDG_CURRENT_DESKTOP_PASS")
+      ;;
+  esac
+}
+
+_verify_pgrep_cursor() {
+  local pid
+  for pid in $(pgrep -x cursor 2>/dev/null || true); do
+    [ "$pid" = "$$" ] && continue
+    return 0
+  done
+  for pid in $(pgrep -f '/usr/share/cursor/cursor' 2>/dev/null || true); do
+    [ "$pid" = "$$" ] && continue
+    return 0
+  done
+  return 1
+}
+
+verify_cursor_started() {
+  local attempt max=3 wait_sec=0.7
+  [ "${CURSOR_UPDATE_LAUNCH_VERIFY:-1}" = 0 ] && return 0
+  if [ -n "${CURSOR_UPDATE_LAUNCH_VERIFY_SEC:-}" ]; then
+    wait_sec="$CURSOR_UPDATE_LAUNCH_VERIFY_SEC"
+  fi
+  for ((attempt = 1; attempt <= max; attempt++)); do
+    sleep "$wait_sec"
+    _verify_pgrep_cursor && return 0
+  done
+  return 1
+}
+
+_launch_nohup_logged() {
+  local launch_log="$1" run_as_user="$2"
+  shift 2
+  {
+    echo "=== $(date -Is) launch attempt pid=$$ user=${run_as_user:-$(id -un)} cmd=$* ==="
+  } >>"$launch_log"
+  if [ -n "$run_as_user" ]; then
+    if [ ${#REOPEN_ENV[@]} -gt 0 ]; then
+      sudo -u "$run_as_user" env "${REOPEN_ENV[@]}" nohup "$@" >>"$launch_log" 2>&1 &
+    else
+      sudo -u "$run_as_user" nohup "$@" >>"$launch_log" 2>&1 &
+    fi
+  elif [ ${#REOPEN_ENV[@]} -gt 0 ]; then
+    nohup env "${REOPEN_ENV[@]}" "$@" >>"$launch_log" 2>&1 &
+  else
+    nohup "$@" >>"$launch_log" 2>&1 &
+  fi
+  disown 2>/dev/null || true
+}
+
+cursor_desktop_file() {
+  local f home="${TARGET_HOME:-$HOME}"
+  f="${XDG_DATA_HOME:-$home/.local/share}/applications/cursor.desktop"
+  [ -f "$f" ] && { printf '%s' "$f"; return 0; }
+  f="$(dpkg -L cursor 2>/dev/null | grep -E '/applications/.*\.desktop$' | head -n1 || true)"
+  [ -n "$f" ] && [ -f "$f" ] && { printf '%s' "$f"; return 0; }
+  for f in /usr/share/applications/cursor.desktop /usr/share/applications/com.cursor.cursor.desktop; do
+    [ -f "$f" ] && { printf '%s' "$f"; return 0; }
+  done
+  return 1
+}
+
+launch_cursor_with_log() {
+  local run_as_user="${1:-}" config_dir launch_log desktop app_id binary home
+
+  if [ -n "$run_as_user" ] && [ -n "${TARGET_HOME:-}" ]; then
+    config_dir="${TARGET_HOME}/.config/cursor-deb-updater"
+    home="$TARGET_HOME"
+  else
+    config_dir="$CDU_CONFIG_DIR"
+    home="${HOME}"
+  fi
+  launch_log="${config_dir}/launch.log"
+  mkdir -p "$config_dir"
+
+  if [ -n "$run_as_user" ]; then
+    desktop="${DESKTOP_FILE:-}"
+  else
+    desktop="$(cursor_desktop_file)" || desktop=""
+  fi
+
+  binary="$(cdu_resolve_real_cursor_binary 2>/dev/null || true)"
+  [ -z "$binary" ] && binary="$CURSOR_BINARY_PATH"
+
+  if [ -n "$desktop" ] && desktop_main_exec_is_updater "$desktop"; then
+    _launch_nohup_logged "$launch_log" "$run_as_user" "$binary"
+  elif [ -n "$desktop" ] && [ -n "$GIO_BIN" ]; then
+    _launch_nohup_logged "$launch_log" "$run_as_user" "$GIO_BIN" launch "$desktop"
+  elif [ -n "$desktop" ] && [ -n "$GTK_LAUNCH_BIN" ]; then
+    app_id="$(basename "$desktop" .desktop)"
+    _launch_nohup_logged "$launch_log" "$run_as_user" "$GTK_LAUNCH_BIN" "$app_id"
+  elif [ -x "$binary" ]; then
+    _launch_nohup_logged "$launch_log" "$run_as_user" "$binary"
+  else
+    cdu_err "Cannot launch Cursor (no desktop entry or binary)."
+    return 1
+  fi
+
+  if verify_cursor_started; then
+    cdu_log_event launch ok "${run_as_user:-$(id -un)}"
+    return 0
+  fi
+  CU_LAUNCH_OK=0
+  cdu_log_event launch fail "${run_as_user:-$(id -un)}"
+  if cdu_interactive_tty; then
+    cdu_err "Cursor did not start — see ${launch_log}"
+    tail -n 5 "$launch_log" >&2 2>/dev/null || true
+  fi
+  return 1
+}
+
+launch_cursor_like_desktop() {
+  build_reopen_env env
+  launch_cursor_with_log
+}
+
+download_deb_to() {
+  local url="$1" dest="$2" effective
+
+  if ! cdu_url_allowlisted "$url"; then
+    return 2
+  fi
+
+  if [ "${CURSOR_DEB_UPDATER_TEST_MODE:-0}" = 1 ]; then
+    printf 'fake deb\n' >"$dest"
+    cdu_log_event download ok "$url"
+    return 0
+  fi
+
+  if [ -n "$CURL_BIN" ]; then
+    effective="$("$CURL_BIN" -fsSL -w '%{url_effective}' -o "$dest" "$url" 2>/dev/null || true)"
+    if [ -s "$dest" ]; then
+      if ! cdu_url_allowlisted "$effective"; then
+        rm -f "$dest"
+        return 2
+      fi
+      cdu_tty_endline
+      cdu_log_event download ok "$url"
+      return 0
+    fi
+  fi
+
+  if [ -n "$WGET_BIN" ] && "$WGET_BIN" -q -O "$dest" "$url"; then
+    cdu_log_event download ok "$url"
+    return 0
+  fi
+  cdu_log_event download fail "$url"
+  return 1
+}
+
+install_cursor_deb() {
+  local deb="$1" log deb_dir deb_base
+  if [ "${CURSOR_DEB_UPDATER_TEST_MODE:-0}" = 1 ]; then
+    cdu_log_event install ok "$(basename "$deb")"
+    return 0
+  fi
+  chmod 644 "$deb" 2>/dev/null || true
+  deb_dir="$(dirname "$deb")"
+  deb_base="$(basename "$deb")"
+  if cdu_interactive_tty && (cd "$deb_dir" && apt-get install -y "./${deb_base}"); then
+    cdu_tty_endline
+    cdu_log_event install ok "$deb_base"
+    return 0
+  fi
+  log="$(mktemp)"
+  if dpkg -i "$deb" >"$log" 2>&1; then
+    rm -f "$log"
+    cdu_log_event install ok "$deb_base"
+    return 0
+  fi
+  cdu_err "Package install failed (last lines):"
+  tail -n 15 "$log" >&2
+  rm -f "$log"
+  apt-get -f install -y >/dev/null 2>&1 || true
+  if dpkg -i "$deb" >/dev/null 2>&1; then
+    cdu_log_event install ok "$deb_base"
+    return 0
+  fi
+  cdu_log_event install fail "$deb_base"
+  return 1
+}
+
+target_user_for_cursor() {
+  if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+    printf '%s' "$SUDO_USER"
+    return 0
+  fi
+  local u
+  u="$(logname 2>/dev/null || true)"
+  [ -n "$u" ] && [ "$u" != "root" ] && { printf '%s' "$u"; return 0; }
+  u="$(getent passwd | awk -F: '$3>=1000 && $3<65534 {print $1; exit}')"
+  [ -n "$u" ] && { printf '%s' "$u"; return 0; }
+  return 1
+}
+
+run_install_phase() {
+  local CURRENT_VER="${1:-unknown}" NEW_VER="${2:-unknown}" install_cursor_cmd="${3:-}"
+  local cur_norm new_norm DO_INSTALL=1 CURSOR_CMD
+
+  WAYLAND_DISPLAY_PASS="${4:-}"
+  XDG_RUNTIME_DIR_PASS="${5:-}"
+  DBUS_SESSION_BUS_ADDRESS_PASS="${6:-}"
+  DISPLAY_PASS="${7:-}"
+  XAUTHORITY_PASS="${8:-}"
+  XDG_SESSION_TYPE_PASS="${9:-}"
+  XDG_CURRENT_DESKTOP_PASS="${10:-}"
+  DEB_URL_PASS="${11:-}"
+
+  [ "$(id -u)" -ne 0 ] && { cdu_err "Install phase must run as root."; return 1; }
+
+  TARGET_USER="$(target_user_for_cursor || true)"
+  if [ -n "$TARGET_USER" ]; then
+    TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+    mkdir -p "${TARGET_HOME}/.config/cursor-deb-updater"
+  fi
+
+  CURSOR_CMD="$install_cursor_cmd"
+  [ -z "$CURSOR_CMD" ] || [ ! -x "$CURSOR_CMD" ] && CURSOR_CMD="$(command -v cursor 2>/dev/null || echo /usr/bin/cursor)"
+
+  cur_norm="$(cdu_normalize_semver "$CURRENT_VER")"
+  new_norm="$(cdu_normalize_semver "$NEW_VER")"
+  if [ -z "$cur_norm" ] || [ -z "$new_norm" ] || [ "$cur_norm" = "$new_norm" ]; then
+    DO_INSTALL=0
+    cdu_msg "Already on latest (${cur_norm:-unknown})."
+  fi
+
+  if [ "$DO_INSTALL" -eq 1 ] && [ "$DRY_RUN" -eq 1 ]; then
+    cdu_msg "[dry-run] Would update $cur_norm → $new_norm (skip pkill, download, dpkg, relaunch)."
+    return 0
+  fi
+
+  if [ "$DO_INSTALL" -eq 1 ]; then
+    local TMP_DEB DEB_URL
+    TMP_DEB="$(mktemp --suffix=.deb)"
+    DEB_URL="$(resolve_deb_download_url "$new_norm" || true)"
+    [ -z "$DEB_URL" ] && { cdu_err "Could not resolve .deb download URL."; rm -f "$TMP_DEB"; return 1; }
+    if ! cdu_url_allowlisted "$DEB_URL"; then
+      rm -f "$TMP_DEB"
+      return 2
+    fi
+    cdu_msg "Updating $cur_norm → $new_norm …"
+    if ! download_deb_to "$DEB_URL" "$TMP_DEB"; then
+      rm -f "$TMP_DEB"
+      return 1
+    fi
+    cdu_msg "Closing Cursor before install …"
+    pkill -x cursor 2>/dev/null || true
+    sleep 3
+    if ! install_cursor_deb "$TMP_DEB"; then
+      rm -f "$TMP_DEB"
+      return 1
+    fi
+    rm -f "$TMP_DEB"
+  fi
+
+  [ -z "$TARGET_USER" ] && { cdu_err "Cannot determine desktop user for relaunch."; return 1; }
+
+  build_reopen_env positional
+  DESKTOP_FILE=""
+  if [ -n "${TARGET_HOME:-}" ] && [ -f "${TARGET_HOME}/.local/share/applications/cursor.desktop" ]; then
+    DESKTOP_FILE="${TARGET_HOME}/.local/share/applications/cursor.desktop"
+  fi
+  if [ -z "${DESKTOP_FILE:-}" ]; then
+    DESKTOP_FILE="$(dpkg -L cursor 2>/dev/null | grep -E '/applications/.*\.desktop$' | head -n1 || true)"
+  fi
+
+  if ! launch_cursor_with_log "$TARGET_USER"; then
+    return 2
+  fi
+  cdu_msg "Done."
+  return 0
+}
+
+launch_updater_terminal() {
+  local term
+  term="$(command -v gnome-terminal 2>/dev/null || true)"
+  [ -z "$term" ] && [ -x /usr/bin/gnome-terminal ] && term=/usr/bin/gnome-terminal
+  if [ -n "$term" ]; then
+    "$term" -- bash -lc "$(printf '%q' "$SCRIPT_PATH")"
+    return 0
+  fi
+  term="$(command -v x-terminal-emulator 2>/dev/null || true)"
+  [ -n "$term" ] && { "$term" -e bash -lc "$(printf '%q' "$SCRIPT_PATH")"; return 0; }
+  return 1
+}
+
+run_update_in_place() {
+  local _st
+  if cdu_silent_enabled && ! [ -t 1 ]; then
+    cdu_notify "Updating Cursor to ${latest_version:-unknown}…"
+  fi
+  set +e
+  cu_sudo_installer "$SCRIPT_PATH" --install \
+    "$installed_version" "$latest_version" "$CURSOR_CMD" \
+    "${WAYLAND_DISPLAY:-}" "${XDG_RUNTIME_DIR:-}" "${DBUS_SESSION_BUS_ADDRESS:-}" \
+    "${DISPLAY:-}" "${XAUTHORITY:-}" "${XDG_SESSION_TYPE:-}" "${XDG_CURRENT_DESKTOP:-}" \
+    "${deb_url:-}"
+  _st=$?
+  set -e
+  [ "$_st" -eq 2 ] && CU_LAUNCH_OK=0
+  if [ "$_st" -eq 0 ]; then
+    cdu_notify "Cursor updated to ${latest_version:-latest}."
+  else
+    cdu_err "Update failed (exit $_st)."
+  fi
+  [ "$_st" -eq 0 ] || [ "$_st" -eq 2 ] && auto_close_terminal
+  exit "$_st"
+}
+
+setup_silent_logging() {
+  if cdu_silent_enabled && ! [ -t 1 ]; then
+    mkdir -p "$CDU_CONFIG_DIR"
+    echo "=== $(date -Is) cursor-deb-updater (pid $$) ===" >>"$CDU_LOG"
+    exec >>"$CDU_LOG" 2>&1
+  fi
+}
+
+# --- internal / test entrypoints ---
+if [ "${1:-}" = --verify-sudo ]; then
+  exit 0
+fi
+
+if [ "${1:-}" = --validate-url ]; then
+  cdu_validate_url_cmd "${2:-}"
+  exit $?
+fi
+
+if [ "${1:-}" = --packaging-gate ]; then
+  cdu_packaging_gate
+  exit $?
+fi
+
+if [ "${1:-}" = --install ]; then
+  shift
+  run_install_phase "$@"
+  exit $?
+fi
+
+# --- check phase ---
+setup_silent_logging
+
+if ! cdu_packaging_gate; then
+  exit 2
+fi
+
+CURSOR_CMD=""
+for candidate in "$(command -v cursor 2>/dev/null || true)" /usr/bin/cursor; do
+  [ -n "$candidate" ] && [ -x "$candidate" ] && CURSOR_CMD="$candidate" && break
+done
+[ -z "$CURSOR_CMD" ] && CURSOR_CMD="cursor"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  cdu_msg "[dry-run] Packaging gate passed. Would check Cursor API for updates."
+  exit 0
+fi
+
+cdu_msg "Checking for Cursor updates …"
+installed_version="unknown"
+installed_version_normalized=""
+if [ -x "$CURSOR_CMD" ] || [ "${CURSOR_DEB_UPDATER_TEST_MODE:-0}" = 1 ]; then
+  installed_version="$("$CURSOR_CMD" --version 2>&1 | head -n1 || true)"
+  installed_version_normalized="$(cdu_normalize_semver "$installed_version")"
+fi
+
+latest_version="unknown"
+deb_url=""
+_release_json="$(fetch_cursor_release_json || true)"
+if [ -n "$_release_json" ]; then
+  latest_version="$(cdu_json_field "$_release_json" version)"
+  deb_url="$(resolve_deb_url_from_json "$_release_json" || true)"
+fi
+
+if [ -n "$deb_url" ] && ! cdu_url_allowlisted "$deb_url"; then
+  exit 2
+fi
+
+if [ -n "$installed_version_normalized" ] && [ -n "$latest_version" ] && \
+   [ "$installed_version_normalized" = "$latest_version" ]; then
+  cdu_msg "Already on latest ($installed_version_normalized)."
+  CU_LAUNCH_OK=1
+  launch_cursor_like_desktop || true
+  auto_close_terminal
+  exit 0
+fi
+
+if [ -x "$CURSOR_CMD" ] && { [ -z "$latest_version" ] || [ "$latest_version" = "unknown" ]; }; then
+  cdu_msg "Could not check for updates; starting Cursor."
+  launch_cursor_like_desktop || true
+  auto_close_terminal
+  exit 0
+fi
+
+cdu_msg "Update available (${installed_version_normalized:-$installed_version} → ${latest_version})."
+
+if ! [ -t 1 ]; then
+  if cdu_silent_enabled; then
+    run_update_in_place
+  fi
+  launch_updater_terminal || { cdu_err "Could not open a terminal for update."; exit 1; }
+  exit 0
+fi
+
+run_update_in_place
