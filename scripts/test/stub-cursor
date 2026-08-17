@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Stub cursor binary for CI smoke (prints semver; unknown argv exits 2).
+set -euo pipefail
+
+case "${1:-}" in
+  --version)
+    printf '%s\n' "${CURSOR_DEB_UPDATER_STUB_VERSION:-1.0.0}"
+    ;;
+  --help|-h)
+    echo "stub-cursor (test fixture)"
+    ;;
+  *)
+    exit 2
+    ;;
+esac

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/cursor-deb-updater"
+UI_MODE_FILE="${CFG_DIR}/ui-mode"
+DEFAULT_MODE="terminal"
+
+usage() {
+  cat <<'EOF'
+Usage: cursor-deb-updater-ui [terminal|silent|status]
+
+  terminal  Show gnome-terminal when an update is needed (app-grid launch).
+  silent    Update in background (notify-send + updater.log).
+  status    Print current ui-mode.
+
+Config: ~/.config/cursor-deb-updater/ui-mode
+EOF
+}
+
+cmd="${1:-status}"
+
+case "$cmd" in
+  terminal|silent)
+    mkdir -p "$CFG_DIR"
+    printf '%s\n' "$cmd" >"$UI_MODE_FILE"
+    echo "Cursor deb updater ui-mode: $cmd"
+    ;;
+  status)
+    if [ -f "$UI_MODE_FILE" ]; then
+      tr -d '[:space:]' <"$UI_MODE_FILE"
+    else
+      echo "$DEFAULT_MODE (default; no ui-mode file)"
+    fi
+    ;;
+  -h|--help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 1
+    ;;
+esac
