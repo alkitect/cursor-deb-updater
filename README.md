@@ -2,7 +2,7 @@
 
 Unofficial helper to update the official Cursor Linux `.deb` and relaunch via your desktop session.
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/alkitect)
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/alkitect/?hidefeed=true&widget=true&embed=true)
 
 ## What this does
 
@@ -92,4 +92,4 @@ This is **not affiliated with Anysphere or Cursor**. It does not relicense Curso
 
 MIT — see [LICENSE](LICENSE).
 
-Optional tip jar: [ko-fi.com/alkitect](https://ko-fi.com/alkitect)
+Optional tip jar: [ko-fi.com/alkitect](https://ko-fi.com/alkitect/?hidefeed=true&widget=true&embed=true)
