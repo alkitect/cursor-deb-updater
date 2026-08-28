@@ -119,3 +119,42 @@ cdu_read_release_track() {
     *) printf '%s' 'latest' ;;
   esac
 }
+
+# Fix integrated launcher desktop entry after root-phase install (644, user-owned, cursor-deb-updater Exec).
+cdu_ensure_integrated_desktop() {
+  local target_user="${1:-}"
+  local target_home desktop apps bin updater template tmp marker
+  if [ -z "$target_user" ]; then
+    return 0
+  fi
+  target_home="$(getent passwd "$target_user" | cut -d: -f6)"
+  [ -n "$target_home" ] || return 0
+  desktop="${target_home}/.local/share/applications/cursor.desktop"
+  apps="${target_home}/.local/share/applications"
+  bin="${target_home}/.local/bin"
+  updater="${bin}/cursor-deb-updater"
+  template="${target_home}/.local/share/cursor-deb-updater/cursor.desktop.template"
+  marker="${target_home}/.config/cursor-deb-updater/integrated-desktop"
+
+  mkdir -p "$apps"
+  if [ -f "$marker" ] || [ -f "$desktop" ]; then
+    if [ -f "$template" ] && [ -x "$updater" ]; then
+      tmp="$(mktemp)"
+      sed -e "s|@HOME@|${target_home}|g" -e "s|@BIN@|${bin}|g" "$template" >"$tmp"
+      install -m0644 "$tmp" "$desktop"
+      rm -f "$tmp"
+      touch "$marker"
+    elif [ -f "$desktop" ]; then
+      if grep -q 'cursor-updater\.sh' "$desktop" 2>/dev/null && [ -x "$updater" ]; then
+        sed -i "s|cursor-updater\.sh|cursor-deb-updater|g" "$desktop"
+      fi
+    fi
+  fi
+  if [ -f "$desktop" ]; then
+    chown "${target_user}:${target_user}" "$desktop"
+    chmod 0644 "$desktop"
+    if command -v update-desktop-database >/dev/null 2>&1; then
+      update-desktop-database "$apps" 2>/dev/null || true
+    fi
+  fi
+}
