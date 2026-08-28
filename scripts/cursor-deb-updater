@@ -478,6 +478,8 @@ run_install_phase() {
     rm -f "$TMP_DEB"
   fi
 
+  cdu_ensure_integrated_desktop "$TARGET_USER"
+
   [ -z "$TARGET_USER" ] && { cdu_err "Cannot determine desktop user for relaunch."; return 1; }
 
   build_reopen_env positional
