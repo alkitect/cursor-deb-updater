@@ -14,7 +14,7 @@ Public README required H2s (enforced by `./scripts/ci-check.sh`):
 ## License
 ```
 
-Also enforced: `.github/FUNDING.yml` with `ko_fi: alkitect`, Ko-fi badge in README, no `SSOT` token, no monorepo paths in public docs.
+Also enforced: `.github/FUNDING.yml` with `ko_fi: alkitect`; README Ko-fi badge (`githubbutton_sm.svg`) in `## Support my work` (Support section after Check it works / before Uninstall); no `SSOT` token; no monorepo paths in public docs.
 
 Gate: `./scripts/ci-check.sh`.
 

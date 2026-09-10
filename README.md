@@ -2,7 +2,6 @@
 
 Unofficial helper to update the official Cursor Linux `.deb` and relaunch via your desktop session.
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/alkitect/?hidefeed=true&widget=true&embed=true)
 
 ## What this does
 
@@ -48,6 +47,12 @@ verify-cursor-deb-updater
 - If update fails on sudo: run from a TTY terminal or see Configure for passwordless sudo.
 
 Maintainers: `./scripts/ci-check.sh`.
+
+## Support my work
+
+Tip jar for the next desktop fix. Or a coffee so the next script stays boring on purpose.
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/alkitect/?hidefeed=true&widget=true&embed=true)
 
 ## Uninstall
 
