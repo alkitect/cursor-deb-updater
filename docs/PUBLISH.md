@@ -2,6 +2,8 @@
 
 Before tag: README must pass `./scripts/ci-check.sh`. See [CONTRIBUTING.md](../CONTRIBUTING.md).
 
+README variant: D
+
 First public tag: v0.1.0
 
 **v0.1.0 scope:** glue + CI green + verify exits 0 in stub environment. **Not** a production soak for “DPI matches app menu after real update” — target that for **v1.0.0** on a machine with the official `.deb`.

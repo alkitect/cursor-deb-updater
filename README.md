@@ -6,7 +6,9 @@ Unofficial helper to update the official Cursor Linux `.deb` and relaunch via yo
 
 ## What this does
 
-Cursor ships a Linux `.deb`, but there is no separate CLI updater for it. This kit downloads the official package from Cursor’s API, installs it with `apt`/`dpkg`, and relaunches Cursor the way the app menu would — forwarding your Wayland/X11 session environment.
+Cursor ships a Linux `.deb`, but there’s no separate CLI updater for it. You either wait on the in-app prompt or dig through the download page again.
+
+This kit downloads the official package from Cursor’s API, installs it with `apt`/`dpkg`, and relaunches Cursor the way the app menu would — forwarding your Wayland/X11 session environment.
 
 **Safe by default:** install does not enable passwordless sudo or replace your `cursor.desktop`. Run verify first; opt in to launcher integration or NOPASSWD only when you want them.
 
