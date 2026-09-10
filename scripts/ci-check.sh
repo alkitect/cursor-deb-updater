@@ -4,7 +4,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
 
-FORBIDDEN_RE='Python/Linux|\.cursor/plans|topics/cursor|cursor-desktop-x11|cursor-managed'
+_p1='Python/'
+_p2='Linux'
+_p3='.cursor/plans'
+_p4='topics/cursor'
+_p5='cursor-desktop-x11'
+_p6='cursor-managed'
+# Split monorepo path tokens so the needle is not one contiguous public string.
+# Never embed the machine hostname in this file (see public-extract-pii-scrub.md).
+FORBIDDEN_RE="${_p1}${_p2}|${_p3}|${_p4}|${_p5}|${_p6}"
 hits="$(grep -rE "${FORBIDDEN_RE}" \
   --include='*.sh' --include='*.md' --include='*.example' --include='*.template' . \
   --exclude-dir=.git --exclude='ci-check.sh' 2>/dev/null || true)"
