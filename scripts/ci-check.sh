@@ -103,7 +103,8 @@ export CURSOR_DEB_UPDATER_TEST_DEB_URL=https://downloads.cursor.com/test/cursor_
 test -x "${tmp}/.local/bin/cursor-deb-updater"
 test -x "${tmp}/.local/bin/cursor-deb-updater-ui"
 test -x "${tmp}/.local/bin/verify-cursor-deb-updater"
-test ! -f /etc/sudoers.d/cursor-deb-updater
+# Default install must not mark passwordless sudo (do not probe live /etc/sudoers.d).
+test ! -f "${XDG_CONFIG_HOME}/cursor-deb-updater/passwordless-sudo-installed"
 test ! -f "${tmp}/.local/share/applications/cursor.desktop"
 
 "${tmp}/.local/bin/verify-cursor-deb-updater"
