@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.1.1 — 2026-09-14
+
+- Docs: portal README (explainer-first Quick start, dry-run/`pkill` callout, Issues help, Releases surface).
+- Tip catch-up: launcher heal after update, CI tmp passwordless-sudo assert, hostname/username scrub, Ko-fi Support section.
+
 ## 0.1.0
 
 - Initial public release: unofficial Cursor Linux `.deb` update glue

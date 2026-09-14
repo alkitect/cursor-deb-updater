@@ -6,16 +6,22 @@ README variant: D
 
 First public tag: v0.1.0
 
+Latest tag: **v0.1.1** (portal README + tip catch-up)
+
 **v0.1.0 scope:** glue + CI green + verify exits 0 in stub environment. **Not** a production soak for “DPI matches app menu after real update” — target that for **v1.0.0** on a machine with the official `.deb`.
 
 Never copy another alkitect repo’s tag. Do not use `RC-BEFORE-1.0` unless intentionally shipping a 0.9.x RC.
 
 ```bash
 ./scripts/ci-check.sh
-git tag -a v0.1.0 -m "v0.1.0"
+git tag -a v0.1.1 -m "v0.1.1"
 git push origin main
-git push origin v0.1.0
-gh release create v0.1.0 --verify-tag
+git push origin v0.1.1
+gh release create v0.1.1 --title "v0.1.1" --notes-file - <<'EOF'
+## 0.1.1
+
+Portal README rewrite and tip catch-up (launcher heal, CI scrub). Prefer tagged install from Releases.
+EOF
 ```
 
 Repo URL: `https://github.com/alkitect/cursor-deb-updater`
@@ -45,7 +51,7 @@ After GitHub is live:
 
 ```bash
 cd /path/to/Linux
-git submodule add -b v0.1.0 https://github.com/alkitect/cursor-deb-updater.git public/cursor-deb-updater
+git submodule add -b v0.1.1 https://github.com/alkitect/cursor-deb-updater.git public/cursor-deb-updater
 ```
 
-Pin submodule gitlink to tag `v0.1.0`, not `main`.
+Pin submodule gitlink to tag `v0.1.1`, not `main`.
