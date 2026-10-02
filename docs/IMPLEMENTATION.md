@@ -7,20 +7,27 @@ Unofficial glue around the official Cursor Linux `.deb`. Not affiliated with Any
 ### Check (user)
 
 1. **Packaging gate** — resolve the real Cursor binary (`/usr/share/cursor/cursor` or `dpkg -L cursor` desktop `Exec=`). `dpkg -S` must report package `cursor`. Exit 2 for non-deb installs.
-2. Read installed version via `cursor --version`.
-3. Fetch release JSON from Cursor API (`RELEASE_TRACK` from config: `latest` or `stable`; platform `linux-x64` or `linux-arm64`).
-4. Validate resolved `.deb` URL against HTTPS allowlist (`www.cursor.com`, `cursor.com`, `api2.cursor.sh`, `downloads.cursor.com`).
-5. If already latest: relaunch via session desktop and exit 0.
-6. If update needed: invoke root install phase via sudo (interactive TTY prompt, or `sudo -n` when passwordless drop-in is configured).
+2. **Resolve channel** — `UPDATE_CHANNEL` from config (`auto` | `apt` | `api`). Default `auto`: use official aptrepo when `/etc/apt/sources.list.d/cursor*.sources` (or `.list`) points at `downloads.cursor.com/aptrepo`; otherwise download API.
+3. **Apt path** — read Installed/Candidate from `apt-cache policy cursor`. If Candidate is not newer (`dpkg --compare-versions`), relaunch and exit 0.
+4. **API path** — read installed version via `cursor --version`. Fetch release JSON (`RELEASE_TRACK`: `latest` or `stable`; platform `linux-x64` or `linux-arm64`). Validate resolved `.deb` URL against HTTPS allowlist (`www.cursor.com`, `cursor.com`, `api2.cursor.sh`, `downloads.cursor.com`). If already latest: relaunch and exit 0.
+5. If update needed: invoke root install phase via sudo (interactive TTY prompt, or `sudo -n` when passwordless drop-in is configured). Pass resolved channel as install arg 12.
 
 ### Install (root, `--install`)
 
-Receives session env vars and optional pre-resolved deb URL (arg 11) to avoid root re-fetch.
+Receives session env vars, optional pre-resolved deb URL (arg 11), and channel (arg 12: `apt` or `api`).
+
+**Apt channel**
+
+1. `apt-get update`, re-read policy, skip upgrade when Candidate is not newer.
+2. `pkill -x cursor`, wait, then `apt-get install --only-upgrade -y cursor`.
+3. Heal integrated desktop and relaunch (same as API path).
+
+**API channel**
 
 1. Re-check versions; skip download if already matched.
 2. Download `.deb`; re-validate **final** URL after redirects.
 3. `pkill -x cursor`, wait, then `apt-get install` (TTY) or `dpkg -i` + `apt-get -f`.
-4. Relaunch as desktop user: if local desktop `Exec=` is this updater, launch `/usr/share/cursor/cursor` directly (avoid `gio launch` recursion); else prefer `gio launch` / `gtk-launch` with forwarded session env.
+4. Relaunch as desktop user: if local desktop `Exec=` is this updater, launch `/usr/share/cursor/cursor` directly (avoid `gio launch` recursion), preferring an optional Chromium-flag wrapper in the desktop user's `~/.local/bin` when present; else prefer `gio launch` / `gtk-launch` with forwarded session env.
 
 Exit 2 = install succeeded but launch verification failed.
 
@@ -37,14 +44,24 @@ Exit 2 = install succeeded but launch verification failed.
 | `--integrate-launcher` | Generate `~/.local/share/applications/cursor.desktop` from template; marker `integrated-desktop` |
 | `--integrate-launcher --force` | Backup foreign desktop to `.bak.<timestamp>` first |
 | `--enable-passwordless-sudo` | Install sudoers drop-in via `setup-passwordless-sudo.sh` |
-| `--dry-run` | Print/update path without pkill, download, dpkg, or relaunch |
+| `--dry-run` | Print/update path without pkill, download, dpkg/apt upgrade, or relaunch |
 
-`~/.config/cursor-deb-updater/ui-mode` is the only UI-mode SSOT (`cursor-deb-updater-ui` writes it).
+`~/.config/cursor-deb-updater/ui-mode` is the only UI-mode file (`cursor-deb-updater-ui` writes it).
 
-## Deferred (not v0.1.0)
+Config (`~/.config/cursor-deb-updater/config`):
+
+| Key | Values | Notes |
+|-----|--------|--------|
+| `UPDATE_CHANNEL` | `auto` (default), `apt`, `api` | `auto` prefers aptrepo when configured |
+| `RELEASE_TRACK` | `latest`, `stable` | Download API only |
+
+## Deferred (not v0.1.x)
 
 - `POST_INSTALL_CMD` hook — use manual host steps after update if you need extra launcher reconciliation.
+- Scoped `apt-get update` to aptrepo only (today refreshes all sources; PackageKit lock still applies).
 
 ## Test mode
 
 `CURSOR_DEB_UPDATER_TEST_MODE=1` with stub `cursor` and mock `dpkg` on PATH powers `./scripts/ci-check.sh` without network or a real Cursor install.
+
+Apt path fixtures: `CURSOR_DEB_UPDATER_TEST_APT_REPO=1`, `CURSOR_DEB_UPDATER_TEST_APT_INSTALLED`, `CURSOR_DEB_UPDATER_TEST_APT_CANDIDATE`.

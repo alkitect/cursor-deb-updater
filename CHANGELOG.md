@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.1.2 — 2026-10-02
+
+- Feat: prefer Anysphere aptrepo (`UPDATE_CHANNEL=auto|apt|api`) — `apt-cache policy` check, `apt-get install --only-upgrade cursor` install; download API kept as fallback.
+- Feat: when relaunching, prefer an optional host Chromium-flag wrapper under `~/.local/bin` when present.
+- Docs: README / IMPLEMENTATION / example.config for the apt-first channel.
+
 ## 0.1.1 — 2026-09-14
 
 - Docs: portal README (explainer-first Quick start, dry-run/`pkill` callout, Issues help, Releases surface).

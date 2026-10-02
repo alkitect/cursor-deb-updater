@@ -307,15 +307,29 @@ launch_cursor_with_log() {
   binary="$(cdu_resolve_real_cursor_binary 2>/dev/null || true)"
   [ -z "$binary" ] && binary="$CURSOR_BINARY_PATH"
 
+  # Prefer host cursor-managed wrapper (ozone / Chromium flags) when present.
+  managed="${home}/.local/bin/cursor-managed"
+  if [ ! -x "$managed" ]; then
+    managed=""
+  fi
+
   if [ -n "$desktop" ] && desktop_main_exec_is_updater "$desktop"; then
-    _launch_nohup_logged "$launch_log" "$run_as_user" "$binary"
+    if [ -n "$managed" ]; then
+      _launch_nohup_logged "$launch_log" "$run_as_user" "$managed" "$binary"
+    else
+      _launch_nohup_logged "$launch_log" "$run_as_user" "$binary"
+    fi
   elif [ -n "$desktop" ] && [ -n "$GIO_BIN" ]; then
     _launch_nohup_logged "$launch_log" "$run_as_user" "$GIO_BIN" launch "$desktop"
   elif [ -n "$desktop" ] && [ -n "$GTK_LAUNCH_BIN" ]; then
     app_id="$(basename "$desktop" .desktop)"
     _launch_nohup_logged "$launch_log" "$run_as_user" "$GTK_LAUNCH_BIN" "$app_id"
   elif [ -x "$binary" ]; then
-    _launch_nohup_logged "$launch_log" "$run_as_user" "$binary"
+    if [ -n "$managed" ]; then
+      _launch_nohup_logged "$launch_log" "$run_as_user" "$managed" "$binary"
+    else
+      _launch_nohup_logged "$launch_log" "$run_as_user" "$binary"
+    fi
   else
     cdu_err "Cannot launch Cursor (no desktop entry or binary)."
     return 1
@@ -405,6 +419,51 @@ install_cursor_deb() {
   return 1
 }
 
+# Root: refresh aptrepo metadata and upgrade the cursor package when Candidate is newer.
+install_cursor_via_apt() {
+  local cur_norm="$1" new_norm="$2"
+  local policy_line inst cand
+
+  if [ "${CURSOR_DEB_UPDATER_TEST_MODE:-0}" = 1 ]; then
+    cdu_log_event install ok "apt:cursor ${cur_norm:-?}→${new_norm:-?}"
+    return 0
+  fi
+
+  cdu_msg "Refreshing apt metadata (Cursor aptrepo) …"
+  if ! apt-get update >/dev/null 2>&1; then
+    cdu_err "apt-get update failed (PackageKit lock or network?). Retry later."
+    cdu_log_event install fail apt-update
+    return 1
+  fi
+
+  policy_line="$(cdu_apt_policy_versions || true)"
+  if [ -z "$policy_line" ]; then
+    cdu_err "Could not read apt-cache policy for package cursor."
+    cdu_log_event install fail apt-policy
+    return 1
+  fi
+  IFS=$'\t' read -r inst cand <<<"$policy_line"
+
+  if ! cdu_apt_candidate_newer "$inst" "$cand"; then
+    cdu_msg "Already on latest apt package (${inst})."
+    return 0
+  fi
+
+  cdu_msg "Updating via apt ${inst} → ${cand} …"
+  cdu_msg "Closing Cursor before install …"
+  pkill -x cursor 2>/dev/null || true
+  sleep 3
+
+  if apt-get install --only-upgrade -y cursor; then
+    cdu_tty_endline
+    cdu_log_event install ok "apt:cursor ${inst}→${cand}"
+    return 0
+  fi
+  cdu_err "apt-get install --only-upgrade cursor failed."
+  cdu_log_event install fail "apt:cursor"
+  return 1
+}
+
 target_user_for_cursor() {
   if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
     printf '%s' "$SUDO_USER"
@@ -420,7 +479,7 @@ target_user_for_cursor() {
 
 run_install_phase() {
   local CURRENT_VER="${1:-unknown}" NEW_VER="${2:-unknown}" install_cursor_cmd="${3:-}"
-  local cur_norm new_norm DO_INSTALL=1 CURSOR_CMD
+  local cur_norm new_norm DO_INSTALL=1 CURSOR_CMD channel
 
   WAYLAND_DISPLAY_PASS="${4:-}"
   XDG_RUNTIME_DIR_PASS="${5:-}"
@@ -430,6 +489,7 @@ run_install_phase() {
   XDG_SESSION_TYPE_PASS="${9:-}"
   XDG_CURRENT_DESKTOP_PASS="${10:-}"
   DEB_URL_PASS="${11:-}"
+  channel="${12:-api}"
 
   [ "$(id -u)" -ne 0 ] && { cdu_err "Install phase must run as root."; return 1; }
 
@@ -444,38 +504,51 @@ run_install_phase() {
 
   cur_norm="$(cdu_normalize_semver "$CURRENT_VER")"
   new_norm="$(cdu_normalize_semver "$NEW_VER")"
-  if [ -z "$cur_norm" ] || [ -z "$new_norm" ] || [ "$cur_norm" = "$new_norm" ]; then
+
+  if [ "$channel" = apt ]; then
+    DO_INSTALL=1
+  elif [ -z "$cur_norm" ] || [ -z "$new_norm" ] || [ "$cur_norm" = "$new_norm" ]; then
     DO_INSTALL=0
     cdu_msg "Already on latest (${cur_norm:-unknown})."
   fi
 
   if [ "$DO_INSTALL" -eq 1 ] && [ "$DRY_RUN" -eq 1 ]; then
-    cdu_msg "[dry-run] Would update $cur_norm → $new_norm (skip pkill, download, dpkg, relaunch)."
+    if [ "$channel" = apt ]; then
+      cdu_msg "[dry-run] Would apt update + install --only-upgrade cursor (${cur_norm:-?} → ${new_norm:-?})."
+    else
+      cdu_msg "[dry-run] Would update $cur_norm → $new_norm (skip pkill, download, dpkg, relaunch)."
+    fi
     return 0
   fi
 
   if [ "$DO_INSTALL" -eq 1 ]; then
-    local TMP_DEB DEB_URL
-    TMP_DEB="$(mktemp --suffix=.deb)"
-    DEB_URL="$(resolve_deb_download_url "$new_norm" || true)"
-    [ -z "$DEB_URL" ] && { cdu_err "Could not resolve .deb download URL."; rm -f "$TMP_DEB"; return 1; }
-    if ! cdu_url_allowlisted "$DEB_URL"; then
+    if [ "$channel" = apt ]; then
+      if ! install_cursor_via_apt "$cur_norm" "$new_norm"; then
+        return 1
+      fi
+    else
+      local TMP_DEB DEB_URL
+      TMP_DEB="$(mktemp --suffix=.deb)"
+      DEB_URL="$(resolve_deb_download_url "$new_norm" || true)"
+      [ -z "$DEB_URL" ] && { cdu_err "Could not resolve .deb download URL."; rm -f "$TMP_DEB"; return 1; }
+      if ! cdu_url_allowlisted "$DEB_URL"; then
+        rm -f "$TMP_DEB"
+        return 2
+      fi
+      cdu_msg "Updating $cur_norm → $new_norm …"
+      if ! download_deb_to "$DEB_URL" "$TMP_DEB"; then
+        rm -f "$TMP_DEB"
+        return 1
+      fi
+      cdu_msg "Closing Cursor before install …"
+      pkill -x cursor 2>/dev/null || true
+      sleep 3
+      if ! install_cursor_deb "$TMP_DEB"; then
+        rm -f "$TMP_DEB"
+        return 1
+      fi
       rm -f "$TMP_DEB"
-      return 2
     fi
-    cdu_msg "Updating $cur_norm → $new_norm …"
-    if ! download_deb_to "$DEB_URL" "$TMP_DEB"; then
-      rm -f "$TMP_DEB"
-      return 1
-    fi
-    cdu_msg "Closing Cursor before install …"
-    pkill -x cursor 2>/dev/null || true
-    sleep 3
-    if ! install_cursor_deb "$TMP_DEB"; then
-      rm -f "$TMP_DEB"
-      return 1
-    fi
-    rm -f "$TMP_DEB"
   fi
 
   cdu_ensure_integrated_desktop "$TARGET_USER"
@@ -521,7 +594,7 @@ run_update_in_place() {
     "$installed_version" "$latest_version" "$CURSOR_CMD" \
     "${WAYLAND_DISPLAY:-}" "${XDG_RUNTIME_DIR:-}" "${DBUS_SESSION_BUS_ADDRESS:-}" \
     "${DISPLAY:-}" "${XAUTHORITY:-}" "${XDG_SESSION_TYPE:-}" "${XDG_CURRENT_DESKTOP:-}" \
-    "${deb_url:-}"
+    "${deb_url:-}" "${resolved_channel:-api}"
   _st=$?
   set -e
   [ "$_st" -eq 2 ] && CU_LAUNCH_OK=0
@@ -576,48 +649,84 @@ for candidate in "$(command -v cursor 2>/dev/null || true)" /usr/bin/cursor; do
 done
 [ -z "$CURSOR_CMD" ] && CURSOR_CMD="cursor"
 
-if [ "$DRY_RUN" -eq 1 ]; then
-  cdu_msg "[dry-run] Packaging gate passed. Would check Cursor API for updates."
-  exit 0
-fi
-
-cdu_msg "Checking for Cursor updates …"
-installed_version="unknown"
-installed_version_normalized=""
-if [ -x "$CURSOR_CMD" ] || [ "${CURSOR_DEB_UPDATER_TEST_MODE:-0}" = 1 ]; then
-  installed_version="$("$CURSOR_CMD" --version 2>&1 | head -n1 || true)"
-  installed_version_normalized="$(cdu_normalize_semver "$installed_version")"
-fi
-
-latest_version="unknown"
-deb_url=""
-_release_json="$(fetch_cursor_release_json || true)"
-if [ -n "$_release_json" ]; then
-  latest_version="$(cdu_json_field "$_release_json" version)"
-  deb_url="$(resolve_deb_url_from_json "$_release_json" || true)"
-fi
-
-if [ -n "$deb_url" ] && ! cdu_url_allowlisted "$deb_url"; then
+resolved_channel=""
+if ! resolved_channel="$(cdu_resolve_update_channel)"; then
   exit 2
 fi
 
-if [ -n "$installed_version_normalized" ] && [ -n "$latest_version" ] && \
-   [ "$installed_version_normalized" = "$latest_version" ]; then
-  cdu_msg "Already on latest ($installed_version_normalized)."
-  CU_LAUNCH_OK=1
-  launch_cursor_like_desktop || true
-  auto_close_terminal
+if [ "$DRY_RUN" -eq 1 ]; then
+  if [ "$resolved_channel" = apt ]; then
+    cdu_msg "[dry-run] Packaging gate passed. Would check aptrepo (apt-cache policy cursor)."
+  else
+    cdu_msg "[dry-run] Packaging gate passed. Would check Cursor download API for updates."
+  fi
   exit 0
 fi
 
-if [ -x "$CURSOR_CMD" ] && { [ -z "$latest_version" ] || [ "$latest_version" = "unknown" ]; }; then
-  cdu_msg "Could not check for updates; starting Cursor."
-  launch_cursor_like_desktop || true
-  auto_close_terminal
-  exit 0
+installed_version="unknown"
+installed_version_normalized=""
+latest_version="unknown"
+deb_url=""
+apt_inst=""
+apt_cand=""
+
+if [ "$resolved_channel" = apt ]; then
+  cdu_msg "Checking for Cursor updates via apt …"
+  _policy="$(cdu_apt_policy_versions || true)"
+  if [ -z "$_policy" ]; then
+    cdu_msg "Could not read apt policy for cursor; starting Cursor."
+    launch_cursor_like_desktop || true
+    auto_close_terminal
+    exit 0
+  fi
+  apt_inst=""
+  apt_cand=""
+  IFS=$'\t' read -r apt_inst apt_cand <<<"$_policy"
+  installed_version="$apt_inst"
+  latest_version="$apt_cand"
+  installed_version_normalized="$(cdu_normalize_semver "$apt_inst")"
+  if ! cdu_apt_candidate_newer "$apt_inst" "$apt_cand"; then
+    cdu_msg "Already on latest apt package ($apt_inst)."
+    CU_LAUNCH_OK=1
+    launch_cursor_like_desktop || true
+    auto_close_terminal
+    exit 0
+  fi
+else
+  cdu_msg "Checking for Cursor updates via download API …"
+  if [ -x "$CURSOR_CMD" ] || [ "${CURSOR_DEB_UPDATER_TEST_MODE:-0}" = 1 ]; then
+    installed_version="$("$CURSOR_CMD" --version 2>&1 | head -n1 || true)"
+    installed_version_normalized="$(cdu_normalize_semver "$installed_version")"
+  fi
+
+  _release_json="$(fetch_cursor_release_json || true)"
+  if [ -n "$_release_json" ]; then
+    latest_version="$(cdu_json_field "$_release_json" version)"
+    deb_url="$(resolve_deb_url_from_json "$_release_json" || true)"
+  fi
+
+  if [ -n "$deb_url" ] && ! cdu_url_allowlisted "$deb_url"; then
+    exit 2
+  fi
+
+  if [ -n "$installed_version_normalized" ] && [ -n "$latest_version" ] && \
+     [ "$installed_version_normalized" = "$latest_version" ]; then
+    cdu_msg "Already on latest ($installed_version_normalized)."
+    CU_LAUNCH_OK=1
+    launch_cursor_like_desktop || true
+    auto_close_terminal
+    exit 0
+  fi
+
+  if [ -x "$CURSOR_CMD" ] && { [ -z "$latest_version" ] || [ "$latest_version" = "unknown" ]; }; then
+    cdu_msg "Could not check for updates; starting Cursor."
+    launch_cursor_like_desktop || true
+    auto_close_terminal
+    exit 0
+  fi
 fi
 
-cdu_msg "Update available (${installed_version_normalized:-$installed_version} → ${latest_version})."
+cdu_msg "Update available (${installed_version_normalized:-$installed_version} → ${latest_version}) [${resolved_channel}]."
 
 if ! [ -t 1 ]; then
   if cdu_silent_enabled; then

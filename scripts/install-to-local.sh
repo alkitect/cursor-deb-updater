@@ -48,6 +48,11 @@ install -m0644 "${ROOT}/desktop/cursor.desktop.template" "${DATA_DIR}/cursor.des
 if [[ ! -f "${CFG_DIR}/config" ]]; then
   install -m0644 "${ROOT}/config/example.config" "${CFG_DIR}/config"
   echo "Seeded ${CFG_DIR}/config"
+else
+  if ! grep -qE '^UPDATE_CHANNEL=' "${CFG_DIR}/config" 2>/dev/null; then
+    printf '\nUPDATE_CHANNEL=auto\n' >>"${CFG_DIR}/config"
+    echo "Added UPDATE_CHANNEL=auto to ${CFG_DIR}/config"
+  fi
 fi
 if [[ ! -f "${CFG_DIR}/ui-mode" ]]; then
   printf 'terminal\n' >"${CFG_DIR}/ui-mode"

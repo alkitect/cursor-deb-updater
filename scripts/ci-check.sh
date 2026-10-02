@@ -61,6 +61,8 @@ done
 
 grep -q '^RELEASE_TRACK=' config/example.config \
   || { echo "ci-check: example.config missing RELEASE_TRACK" >&2; exit 1; }
+grep -qE '^UPDATE_CHANNEL=(auto|apt|api)$' config/example.config \
+  || { echo "ci-check: example.config missing UPDATE_CHANNEL=auto|apt|api" >&2; exit 1; }
 grep -qE '^POST_INSTALL_CMD=' config/example.config \
   && { echo "ci-check: example.config must not ship POST_INSTALL_CMD" >&2; exit 1; }
 grep -qE '^UI_MODE=' config/example.config \
@@ -141,8 +143,27 @@ grep -q 'cursor-deb-updater' "${tmp}/.local/share/applications/cursor.desktop"
 grep -q '/usr/share/cursor/cursor --new-window' "${tmp}/.local/share/applications/cursor.desktop"
 ! grep -q 'cursor-managed' "${tmp}/.local/share/applications/cursor.desktop"
 
+grep -q 'cdu_resolve_update_channel' "${ROOT}/scripts/lib/common.sh" \
+  || { echo "ci-check: missing apt channel resolver" >&2; exit 1; }
+grep -q 'install_cursor_via_apt' "${ROOT}/scripts/cursor-deb-updater" \
+  || { echo "ci-check: missing apt install path" >&2; exit 1; }
 grep -q 'desktop_main_exec_is_updater' "${ROOT}/scripts/cursor-deb-updater" \
   || { echo "ci-check: missing gio-recursion guard" >&2; exit 1; }
+
+# Apt channel: repo present + newer Candidate → install path selected (test mode, no network).
+export CURSOR_DEB_UPDATER_TEST_APT_REPO=1
+export CURSOR_DEB_UPDATER_TEST_APT_INSTALLED=1.0.0-1
+export CURSOR_DEB_UPDATER_TEST_APT_CANDIDATE=9.9.9-2
+printf 'UPDATE_CHANNEL=auto\nRELEASE_TRACK=latest\n' >"${XDG_CONFIG_HOME}/cursor-deb-updater/config"
+set +e
+out="$("${tmp}/.local/bin/cursor-deb-updater" --dry-run 2>&1)"
+rc_apt_dry=$?
+set -e
+[[ "${rc_apt_dry}" -eq 0 ]] || { echo "ci-check: apt dry-run failed (${rc_apt_dry}): ${out}" >&2; exit 1; }
+printf '%s\n' "${out}" | grep -qi aptrepo \
+  || { echo "ci-check: apt dry-run should mention aptrepo: ${out}" >&2; exit 1; }
+unset CURSOR_DEB_UPDATER_TEST_APT_REPO CURSOR_DEB_UPDATER_TEST_APT_INSTALLED CURSOR_DEB_UPDATER_TEST_APT_CANDIDATE
+printf 'UPDATE_CHANNEL=auto\nRELEASE_TRACK=latest\n' >"${XDG_CONFIG_HOME}/cursor-deb-updater/config"
 
 "${ROOT}/scripts/uninstall-from-local.sh"
 test ! -x "${tmp}/.local/bin/cursor-deb-updater"

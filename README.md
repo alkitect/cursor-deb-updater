@@ -8,9 +8,11 @@ Latest release notes: [CHANGELOG.md](CHANGELOG.md) and [GitHub Releases](https:/
 
 ## What this does
 
-Cursor ships a Linux `.deb`, but there is no separate CLI updater for it. You either wait on the in-app prompt or dig through the download page again.
+Cursor ships a Linux `.deb`. On recent builds the package postinst also configures Anysphere's APT repository (`downloads.cursor.com/aptrepo`), and the app tells you when a newer package is available via apt.
 
-This kit downloads the official package from Cursor's API, installs it with `apt`/`dpkg`, and relaunches Cursor the way the app menu would, forwarding your Wayland/X11 session environment.
+This kit checks for updates on launch (or from a terminal), installs them, and relaunches Cursor the way the app menu would, forwarding your Wayland/X11 session environment.
+
+By default it prefers apt when the Cursor aptrepo source is present (`apt-get update` + `apt-get install --only-upgrade cursor`). If that repo is missing, it falls back to Cursor's download API and a direct `.deb` install.
 
 Safe by default: install does not enable passwordless sudo or replace your `cursor.desktop`. Run verify first; opt in to launcher integration or NOPASSWD only when you want them.
 
@@ -61,7 +63,7 @@ cursor-deb-updater --dry-run
 cursor-deb-updater
 ```
 
-You should see a download/install path when an update exists, or "already on latest" when current. If update fails on sudo, run from a TTY terminal or see Configure for passwordless sudo.
+You should see an apt or download/install path when an update exists, or "already on latest" when current. If update fails on sudo, run from a TTY terminal or see Configure for passwordless sudo.
 
 ## Check it works
 
@@ -110,7 +112,14 @@ UI mode (terminal vs silent background updates):
 cursor-deb-updater-ui terminal   # or silent / status
 ```
 
-Config file `~/.config/cursor-deb-updater/config` supports `RELEASE_TRACK=latest` or `stable`.
+Config file `~/.config/cursor-deb-updater/config`:
+
+```bash
+UPDATE_CHANNEL=auto    # auto | apt | api  (auto prefers aptrepo when configured)
+RELEASE_TRACK=latest     # download API only: latest | stable
+```
+
+Re-running `install-to-local.sh` appends `UPDATE_CHANNEL=auto` if your older config lacks it.
 
 ## Limits & safety
 
@@ -118,8 +127,9 @@ This is not affiliated with Anysphere or Cursor. It does not relicense Cursor an
 
 - Platform: official `.deb` on Debian/Ubuntu; packaging gate refuses snap/AppImage/Flatpak wrappers.
 - Kill-switch: uninstall glue; optionally `sudo rm /etc/sudoers.d/cursor-deb-updater`.
-- Defaults: HTTPS allowlist on initial and post-redirect download URLs; interactive sudo when NOPASSWD is absent.
-- Tradeoff: updates run `pkill -x cursor` before install (closes every Cursor window); API/CDN shape may change.
+- Defaults: apt-first when aptrepo is configured; HTTPS allowlist on API download URLs; interactive sudo when NOPASSWD is absent.
+- Tradeoff: updates run `pkill -x cursor` before install (closes every Cursor window); apt metadata refresh can fail under PackageKit locks; API/CDN shape may change.
+- Optional: if a Chromium-flag launch wrapper exists next to the updater under `~/.local/bin`, relaunch uses it so host ozone flags still apply.
 - This GitHub repo is the release source for tagged releases. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License

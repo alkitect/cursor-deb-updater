@@ -70,6 +70,13 @@ fi
 [[ -d "${CFG_DIR}" ]] || fail "missing config dir ${CFG_DIR}"
 [[ -f "${CFG_DIR}/config" ]] || fail "missing ${CFG_DIR}/config"
 grep -q '^RELEASE_TRACK=' "${CFG_DIR}/config" || fail "config missing RELEASE_TRACK"
+if grep -qE '^UPDATE_CHANNEL=' "${CFG_DIR}/config" 2>/dev/null; then
+  _ch="$(grep -E '^UPDATE_CHANNEL=' "${CFG_DIR}/config" | head -1 | cut -d= -f2- | tr -d '[:space:]')"
+  case "${_ch}" in
+    auto|apt|api) ;;
+    *) fail "UPDATE_CHANNEL must be auto|apt|api (got ${_ch})" ;;
+  esac
+fi
 if grep -qE '^POST_INSTALL_CMD=' "${CFG_DIR}/config" 2>/dev/null; then
   fail "config must not contain POST_INSTALL_CMD in v0.1.0"
 fi

@@ -108,15 +108,103 @@ cdu_silent_enabled() {
   [ "$(cdu_ui_mode)" = silent ]
 }
 
+cdu_config_value() {
+  local key="$1" cfg="${CDU_CONFIG_DIR}/config" line=""
+  [ -f "$cfg" ] || return 0
+  line="$(grep -E "^${key}=" "$cfg" | head -1 | cut -d= -f2- || true)"
+  printf '%s' "$(printf '%s' "$line" | tr -d '[:space:]"'"'" )"
+}
+
 cdu_read_release_track() {
-  local cfg="${CDU_CONFIG_DIR}/config"
-  local track="latest"
-  if [ -f "$cfg" ]; then
-    track="$(grep -E '^RELEASE_TRACK=' "$cfg" | head -1 | cut -d= -f2- | tr -d '[:space:]"'"'" || true)"
-  fi
+  local track
+  track="$(cdu_config_value RELEASE_TRACK)"
   case "$track" in
     latest|stable) printf '%s' "$track" ;;
     *) printf '%s' 'latest' ;;
+  esac
+}
+
+# auto = prefer official aptrepo when configured; else download API.
+cdu_read_update_channel() {
+  local ch
+  ch="$(cdu_config_value UPDATE_CHANNEL)"
+  case "$ch" in
+    auto|apt|api) printf '%s' "$ch" ;;
+    *) printf '%s' 'auto' ;;
+  esac
+}
+
+cdu_apt_repo_configured() {
+  local f
+  if [ "${CURSOR_DEB_UPDATER_TEST_MODE:-0}" = 1 ]; then
+    [ "${CURSOR_DEB_UPDATER_TEST_APT_REPO:-0}" = 1 ]
+    return $?
+  fi
+  for f in /etc/apt/sources.list.d/cursor.sources /etc/apt/sources.list.d/cursor.list \
+    /etc/apt/sources.list.d/cursor-apparmor.sources; do
+    if [ -f "$f" ] && grep -qE 'downloads\.cursor\.com/aptrepo' "$f" 2>/dev/null; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Prints "installed<TAB>candidate" or empty on failure. Versions may include Debian revision.
+cdu_apt_policy_versions() {
+  local policy inst cand
+  if [ "${CURSOR_DEB_UPDATER_TEST_MODE:-0}" = 1 ]; then
+    inst="${CURSOR_DEB_UPDATER_TEST_APT_INSTALLED:-}"
+    cand="${CURSOR_DEB_UPDATER_TEST_APT_CANDIDATE:-}"
+    [ -n "$inst" ] && [ -n "$cand" ] || return 1
+    printf '%s\t%s' "$inst" "$cand"
+    return 0
+  fi
+  policy="$(apt-cache policy cursor 2>/dev/null || true)"
+  [ -n "$policy" ] || return 1
+  inst="$(printf '%s\n' "$policy" | awk '/^\s*Installed:/{print $2; exit}')"
+  cand="$(printf '%s\n' "$policy" | awk '/^\s*Candidate:/{print $2; exit}')"
+  case "$inst" in ''|'(none)') return 1 ;; esac
+  case "$cand" in ''|'(none)') return 1 ;; esac
+  printf '%s\t%s' "$inst" "$cand"
+  return 0
+}
+
+cdu_apt_candidate_newer() {
+  local inst="$1" cand="$2"
+  [ -n "$inst" ] && [ -n "$cand" ] || return 1
+  if [ "${CURSOR_DEB_UPDATER_TEST_MODE:-0}" = 1 ]; then
+    [ "$cand" != "$inst" ] && return 0
+    return 1
+  fi
+  dpkg --compare-versions "$cand" gt "$inst"
+}
+
+# Resolve effective channel: apt | api
+cdu_resolve_update_channel() {
+  local pref
+  pref="$(cdu_read_update_channel)"
+  case "$pref" in
+    apt)
+      if cdu_apt_repo_configured; then
+        printf '%s' apt
+        return 0
+      fi
+      cdu_err "UPDATE_CHANNEL=apt but Cursor aptrepo is not configured under /etc/apt/sources.list.d/"
+      cdu_err "Install/repair the official .deb (postinst adds the repo) or set UPDATE_CHANNEL=api|auto."
+      return 1
+      ;;
+    api)
+      printf '%s' api
+      return 0
+      ;;
+    *)
+      if cdu_apt_repo_configured; then
+        printf '%s' apt
+      else
+        printf '%s' api
+      fi
+      return 0
+      ;;
   esac
 }
 
