@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.1.4 — 2026-10-02
+
+- Fix: desktop entry installs the newer build before relaunch when passwordless sudo covers `~/.local/bin/cursor-deb-updater`; otherwise opens a terminal so sudo can prompt (still before Cursor starts).
+- Fix: `verify-cursor-deb-updater` warns when a sudoers drop-in exists but `sudo -n` fails for the installed binary (stale path).
+- Change: default ui-mode is `silent` (app-grid prefer in-place install); `terminal` remains for interactive sudo.
+
 ## 0.1.3 — 2026-10-02
 
 - Fix: `UPDATE_CHANNEL=auto` compares aptrepo Candidate vs download API and installs from the newer source (apt on a version tie). Avoids staying on a stale aptrepo while the API already ships a newer `.deb`.

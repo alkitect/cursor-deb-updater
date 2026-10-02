@@ -12,7 +12,9 @@ Unofficial glue around the official Cursor Linux `.deb`. Not affiliated with Any
    - `auto` (default): probe aptrepo Candidate (when configured) and download API; pick the source with the newer normalized semver. Prefer apt when versions tie or only apt is known.
 3. **Installed version** — prefer apt `Installed` when available, else `cursor --version`.
 4. **Chosen source** — if Candidate/API version is not newer than installed (`cdu_semver_gt`), relaunch and exit 0.
-5. If update needed: invoke root install phase via sudo (interactive TTY prompt, or `sudo -n` when passwordless drop-in is configured). Pass resolved channel as install arg 12.
+5. If update needed:
+   - **TTY:** run root install via sudo (prompt or `sudo -n`).
+   - **Desktop (no TTY):** if `sudo -n` works for this script, install in place then relaunch. Otherwise open a terminal so sudo can prompt (install still completes before Cursor relaunches). If neither works, exit 1 with NOPASSWD instructions.
 
 ### Install (root, `--install`)
 
@@ -48,7 +50,7 @@ Exit 2 = install succeeded but launch verification failed.
 | `--enable-passwordless-sudo` | Install sudoers drop-in via `setup-passwordless-sudo.sh` |
 | `--dry-run` | Print/update path without pkill, download, dpkg/apt upgrade, or relaunch |
 
-`~/.config/cursor-deb-updater/ui-mode` is the only UI-mode file (`cursor-deb-updater-ui` writes it).
+`~/.config/cursor-deb-updater/ui-mode` is the only UI-mode file (`cursor-deb-updater-ui` writes it). Default **`silent`**: app-grid installs then relaunches when passwordless sudo is configured. **`terminal`**: open a terminal when sudo needs a password.
 
 Config (`~/.config/cursor-deb-updater/config`):
 

@@ -5,7 +5,7 @@ set -euo pipefail
 CDU_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/cursor-deb-updater"
 CDU_LOG="${CDU_CONFIG_DIR}/updater.log"
 CDU_UI_MODE_FILE="${CDU_CONFIG_DIR}/ui-mode"
-CDU_UI_MODE_DEFAULT="terminal"
+CDU_UI_MODE_DEFAULT="silent"
 CDU_INTEGRATED_MARKER="${CDU_CONFIG_DIR}/integrated-desktop"
 CDU_SUDOERS_FILE="/etc/sudoers.d/cursor-deb-updater"
 

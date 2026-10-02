@@ -89,6 +89,11 @@ if [[ -f /etc/sudoers.d/cursor-deb-updater ]]; then
   warn "passwordless sudo drop-in present (expected only after --enable-passwordless-sudo)"
   [[ "${STRICT}" -eq 1 ]] && fail "unexpected sudoers without --strict waiver"
 fi
+if [[ -f "${CFG_DIR}/passwordless-sudo-installed" ]] || [[ -f /etc/sudoers.d/cursor-deb-updater ]]; then
+  if ! sudo -n "${BIN}/cursor-deb-updater" --verify-sudo >/dev/null 2>&1; then
+    warn "passwordless sudo does not cover ${BIN}/cursor-deb-updater (stale path?). Re-run: ${BIN}/setup-passwordless-sudo.sh"
+  fi
+fi
 
 set +e
 "${BIN}/cursor-deb-updater" --packaging-gate 2>/dev/null

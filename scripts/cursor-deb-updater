@@ -608,7 +608,9 @@ run_update_in_place() {
 }
 
 setup_silent_logging() {
-  if cdu_silent_enabled && ! [ -t 1 ]; then
+  # Desktop launches have no TTY; capture check/install output (not dry-run).
+  [ "${DRY_RUN:-0}" -eq 1 ] && return 0
+  if ! [ -t 1 ]; then
     mkdir -p "$CDU_CONFIG_DIR"
     echo "=== $(date -Is) cursor-deb-updater (pid $$) ===" >>"$CDU_LOG"
     exec >>"$CDU_LOG" 2>&1
@@ -780,10 +782,19 @@ latest_version="$latest_norm"
 cdu_msg "Update available (${installed_version_normalized:-$installed_version} → ${latest_version}) [${resolved_channel}]."
 
 if ! [ -t 1 ]; then
-  if cdu_silent_enabled; then
+  # Desktop entry: install latest before relaunch.
+  # Prefer in-place when passwordless sudo matches this binary; else open a
+  # terminal so sudo can prompt (still installs before Cursor starts).
+  if verify_installer_sudo; then
     run_update_in_place
   fi
-  launch_updater_terminal || { cdu_err "Could not open a terminal for update."; exit 1; }
+  launch_updater_terminal || {
+    cdu_err "Could not open a terminal for update, and passwordless sudo is unavailable."
+    cdu_err "Enable passwordless sudo for this binary, then relaunch from the app grid:"
+    cdu_err "  ${HOME}/.local/bin/setup-passwordless-sudo.sh"
+    cdu_notify "Cursor update needs sudo (see updater.log)."
+    exit 1
+  }
   exit 0
 fi
 

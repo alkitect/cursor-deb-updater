@@ -6,9 +6,9 @@ README variant: D
 
 First public tag: v0.1.0
 
-Current tag: **v0.1.3**
+Current tag: **v0.1.4**
 
-Latest tag: **v0.1.3** (`UPDATE_CHANNEL=auto` picks newer of aptrepo vs download API; mawk apt policy parse)
+Latest tag: **v0.1.4** (desktop install-before-launch; default silent ui-mode; stale sudoers verify warn)
 
 **v0.1.0 scope:** glue + CI green + verify exits 0 in stub environment. **Not** a production soak for “DPI matches app menu after real update” — target that for **v1.0.0** on a machine with the official `.deb`.
 
@@ -16,12 +16,12 @@ Never copy another alkitect repo’s tag. Do not use `RC-BEFORE-1.0` unless inte
 
 ```bash
 ./scripts/ci-check.sh
-git tag -a v0.1.3 -m "v0.1.3"
-git push origin main v0.1.3
-gh release create v0.1.3 --title "v0.1.3" --notes-file - <<'EOF'
-## 0.1.3
+git tag -a v0.1.4 -m "v0.1.4"
+git push origin main v0.1.4
+gh release create v0.1.4 --title "v0.1.4" --notes-file - <<'EOF'
+## 0.1.4
 
-`UPDATE_CHANNEL=auto` compares aptrepo Candidate vs download API and installs from the newer source (apt on a tie). Also fixes apt-cache policy parsing on Ubuntu mawk.
+Desktop entry installs the newer build before relaunch when passwordless sudo covers ~/.local/bin/cursor-deb-updater; otherwise opens a terminal for sudo. Default ui-mode is silent.
 EOF
 ```
 
@@ -52,7 +52,7 @@ After GitHub is live:
 
 ```bash
 cd /path/to/Linux
-git submodule add -b v0.1.3 https://github.com/alkitect/cursor-deb-updater.git public/cursor-deb-updater
+git submodule add -b v0.1.4 https://github.com/alkitect/cursor-deb-updater.git public/cursor-deb-updater
 ```
 
-Pin submodule gitlink to tag `v0.1.3`, not `main`.
+Pin submodule gitlink to tag `v0.1.4`, not `main`.

@@ -3,14 +3,14 @@ set -euo pipefail
 
 CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/cursor-deb-updater"
 UI_MODE_FILE="${CFG_DIR}/ui-mode"
-DEFAULT_MODE="terminal"
+DEFAULT_MODE="silent"
 
 usage() {
   cat <<'EOF'
 Usage: cursor-deb-updater-ui [terminal|silent|status]
 
-  terminal  Show gnome-terminal when an update is needed (app-grid launch).
-  silent    Update in background (notify-send + updater.log).
+  silent    Default. Desktop entry installs then relaunches (needs passwordless sudo).
+  terminal  Show gnome-terminal when an update needs an interactive sudo password.
   status    Print current ui-mode.
 
 Config: ~/.config/cursor-deb-updater/ui-mode

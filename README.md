@@ -106,11 +106,15 @@ Optional flags at install time:
 ./scripts/install-to-local.sh --integrate-launcher --force   # backup foreign cursor.desktop first
 ```
 
-UI mode (terminal vs silent background updates):
+UI mode (silent desktop install vs terminal for sudo prompts):
 
 ```bash
-cursor-deb-updater-ui terminal   # or silent / status
+cursor-deb-updater-ui silent     # default: app-grid installs then relaunches
+cursor-deb-updater-ui terminal   # open a terminal when sudo needs a password
+cursor-deb-updater-ui status
 ```
+
+Desktop launches install the newer apt/API build before Cursor starts when passwordless sudo is configured (`--enable-passwordless-sudo` or `setup-passwordless-sudo.sh`). Without it, silent mode errors; terminal mode opens a window so sudo can prompt.
 
 Config file `~/.config/cursor-deb-updater/config`:
 

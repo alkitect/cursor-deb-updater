@@ -55,8 +55,8 @@ else
   fi
 fi
 if [[ ! -f "${CFG_DIR}/ui-mode" ]]; then
-  printf 'terminal\n' >"${CFG_DIR}/ui-mode"
-  echo "Seeded ${CFG_DIR}/ui-mode (terminal)"
+  printf 'silent\n' >"${CFG_DIR}/ui-mode"
+  echo "Seeded ${CFG_DIR}/ui-mode (silent)"
 fi
 
 integrate_launcher() {

@@ -14,11 +14,11 @@ Actions=terminal-updates;silent-updates;new-empty-window;
 Keywords=cursor;
 
 [Desktop Action terminal-updates]
-Name=Show terminal on updates
+Name=Show terminal for sudo prompts
 Exec=@BIN@/cursor-deb-updater-ui terminal
 
 [Desktop Action silent-updates]
-Name=Use silent updates
+Name=Install updates from app grid
 Exec=@BIN@/cursor-deb-updater-ui silent
 
 [Desktop Action new-empty-window]
