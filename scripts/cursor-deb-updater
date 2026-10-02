@@ -649,18 +649,9 @@ for candidate in "$(command -v cursor 2>/dev/null || true)" /usr/bin/cursor; do
 done
 [ -z "$CURSOR_CMD" ] && CURSOR_CMD="cursor"
 
-resolved_channel=""
-if ! resolved_channel="$(cdu_resolve_update_channel)"; then
+channel_pref=""
+if ! channel_pref="$(cdu_resolve_update_channel)"; then
   exit 2
-fi
-
-if [ "$DRY_RUN" -eq 1 ]; then
-  if [ "$resolved_channel" = apt ]; then
-    cdu_msg "[dry-run] Packaging gate passed. Would check aptrepo (apt-cache policy cursor)."
-  else
-    cdu_msg "[dry-run] Packaging gate passed. Would check Cursor download API for updates."
-  fi
-  exit 0
 fi
 
 installed_version="unknown"
@@ -669,63 +660,123 @@ latest_version="unknown"
 deb_url=""
 apt_inst=""
 apt_cand=""
+api_version=""
+_release_json=""
+_policy=""
+resolved_channel=""
 
-if [ "$resolved_channel" = apt ]; then
-  cdu_msg "Checking for Cursor updates via apt …"
-  _policy="$(cdu_apt_policy_versions || true)"
-  if [ -z "$_policy" ]; then
-    cdu_msg "Could not read apt policy for cursor; starting Cursor."
-    launch_cursor_like_desktop || true
-    auto_close_terminal
-    exit 0
-  fi
-  apt_inst=""
-  apt_cand=""
-  IFS=$'\t' read -r apt_inst apt_cand <<<"$_policy"
-  installed_version="$apt_inst"
-  latest_version="$apt_cand"
-  installed_version_normalized="$(cdu_normalize_semver "$apt_inst")"
-  if ! cdu_apt_candidate_newer "$apt_inst" "$apt_cand"; then
-    cdu_msg "Already on latest apt package ($apt_inst)."
-    CU_LAUNCH_OK=1
-    launch_cursor_like_desktop || true
-    auto_close_terminal
-    exit 0
-  fi
-else
-  cdu_msg "Checking for Cursor updates via download API …"
-  if [ -x "$CURSOR_CMD" ] || [ "${CURSOR_DEB_UPDATER_TEST_MODE:-0}" = 1 ]; then
-    installed_version="$("$CURSOR_CMD" --version 2>&1 | head -n1 || true)"
-    installed_version_normalized="$(cdu_normalize_semver "$installed_version")"
-  fi
+probe_apt=0
+probe_api=0
+case "$channel_pref" in
+  apt) probe_apt=1 ;;
+  api) probe_api=1 ;;
+  auto)
+    probe_apt=1
+    probe_api=1
+    ;;
+esac
 
-  _release_json="$(fetch_cursor_release_json || true)"
-  if [ -n "$_release_json" ]; then
-    latest_version="$(cdu_json_field "$_release_json" version)"
-    deb_url="$(resolve_deb_url_from_json "$_release_json" || true)"
-  fi
-
-  if [ -n "$deb_url" ] && ! cdu_url_allowlisted "$deb_url"; then
+if [ "$probe_apt" -eq 1 ]; then
+  if cdu_apt_repo_configured; then
+    cdu_msg "Checking aptrepo Candidate …"
+    _policy="$(cdu_apt_policy_versions || true)"
+    if [ -n "$_policy" ]; then
+      IFS=$'\t' read -r apt_inst apt_cand <<<"$_policy"
+    else
+      cdu_verbose "Could not read apt-cache policy for cursor."
+    fi
+  elif [ "$channel_pref" = apt ]; then
+    cdu_err "UPDATE_CHANNEL=apt but Cursor aptrepo is not configured."
     exit 2
-  fi
-
-  if [ -n "$installed_version_normalized" ] && [ -n "$latest_version" ] && \
-     [ "$installed_version_normalized" = "$latest_version" ]; then
-    cdu_msg "Already on latest ($installed_version_normalized)."
-    CU_LAUNCH_OK=1
-    launch_cursor_like_desktop || true
-    auto_close_terminal
-    exit 0
-  fi
-
-  if [ -x "$CURSOR_CMD" ] && { [ -z "$latest_version" ] || [ "$latest_version" = "unknown" ]; }; then
-    cdu_msg "Could not check for updates; starting Cursor."
-    launch_cursor_like_desktop || true
-    auto_close_terminal
-    exit 0
   fi
 fi
 
+if [ -x "$CURSOR_CMD" ] || [ "${CURSOR_DEB_UPDATER_TEST_MODE:-0}" = 1 ]; then
+  _cursor_ver="$("$CURSOR_CMD" --version 2>&1 | head -n1 || true)"
+else
+  _cursor_ver=""
+fi
+if [ -n "$apt_inst" ]; then
+  installed_version="$apt_inst"
+elif [ -n "$_cursor_ver" ]; then
+  installed_version="$_cursor_ver"
+fi
+installed_version_normalized="$(cdu_normalize_semver "$installed_version")"
+
+if [ "$probe_api" -eq 1 ]; then
+  cdu_msg "Checking download API …"
+  _release_json="$(fetch_cursor_release_json || true)"
+  if [ -n "$_release_json" ]; then
+    api_version="$(cdu_json_field "$_release_json" version)"
+    deb_url="$(resolve_deb_url_from_json "$_release_json" || true)"
+  fi
+  if [ -n "$deb_url" ] && ! cdu_url_allowlisted "$deb_url"; then
+    exit 2
+  fi
+fi
+
+case "$channel_pref" in
+  apt)
+    resolved_channel=apt
+    ;;
+  api)
+    resolved_channel=api
+    ;;
+  auto)
+    if ! resolved_channel="$(cdu_pick_channel_by_version "$apt_cand" "$api_version")"; then
+      if [ "$DRY_RUN" -eq 1 ]; then
+        cdu_msg "[dry-run] Could not compare apt/API versions (apt=${apt_cand:-none} api=${api_version:-none})."
+        exit 0
+      fi
+      cdu_msg "Could not check for updates; starting Cursor."
+      launch_cursor_like_desktop || true
+      auto_close_terminal
+      exit 0
+    fi
+    cdu_msg "Chose ${resolved_channel} (apt=${apt_cand:-none} api=${api_version:-none})."
+    ;;
+esac
+
+if [ "$resolved_channel" = apt ]; then
+  latest_version="$apt_cand"
+else
+  latest_version="$api_version"
+fi
+latest_norm="$(cdu_normalize_semver "$latest_version")"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  if [ -z "$latest_norm" ]; then
+    cdu_msg "[dry-run] No version from ${resolved_channel} (apt=${apt_cand:-none} api=${api_version:-none})."
+    exit 0
+  fi
+  if [ -n "$installed_version_normalized" ] && ! cdu_semver_gt "$latest_norm" "$installed_version_normalized"; then
+    cdu_msg "[dry-run] Already on latest (${installed_version_normalized}). apt=${apt_cand:-none} api=${api_version:-none}."
+    exit 0
+  fi
+  if [ "$resolved_channel" = apt ]; then
+    cdu_msg "[dry-run] Would update via aptrepo (${installed_version_normalized:-?} → ${latest_norm})."
+  else
+    cdu_msg "[dry-run] Would update via download API (${installed_version_normalized:-?} → ${latest_norm})."
+  fi
+  exit 0
+fi
+
+if [ -z "$latest_norm" ] || [ "$latest_norm" = "unknown" ]; then
+  cdu_msg "Could not check for updates; starting Cursor."
+  launch_cursor_like_desktop || true
+  auto_close_terminal
+  exit 0
+fi
+
+if [ -n "$installed_version_normalized" ] && ! cdu_semver_gt "$latest_norm" "$installed_version_normalized"; then
+  cdu_msg "Already on latest ($installed_version_normalized)."
+  CU_LAUNCH_OK=1
+  launch_cursor_like_desktop || true
+  auto_close_terminal
+  exit 0
+fi
+
+latest_version="$latest_norm"
 cdu_msg "Update available (${installed_version_normalized:-$installed_version} → ${latest_version}) [${resolved_channel}]."
 
 if ! [ -t 1 ]; then

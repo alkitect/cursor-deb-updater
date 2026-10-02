@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.1.3 — 2026-10-02
+
+- Fix: `UPDATE_CHANNEL=auto` compares aptrepo Candidate vs download API and installs from the newer source (apt on a version tie). Avoids staying on a stale aptrepo while the API already ships a newer `.deb`.
+- Fix: parse `apt-cache policy` with POSIX `[[:space:]]` so mawk (Ubuntu default) returns Installed/Candidate.
+
 ## 0.1.2 — 2026-10-02
 
 - Feat: prefer Anysphere aptrepo (`UPDATE_CHANNEL=auto|apt|api`) — `apt-cache policy` check, `apt-get install --only-upgrade cursor` install; download API kept as fallback.

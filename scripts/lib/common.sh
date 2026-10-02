@@ -124,7 +124,7 @@ cdu_read_release_track() {
   esac
 }
 
-# auto = prefer official aptrepo when configured; else download API.
+# auto = compare aptrepo Candidate vs download API and pick the newer source.
 cdu_read_update_channel() {
   local ch
   ch="$(cdu_config_value UPDATE_CHANNEL)"
@@ -132,6 +132,47 @@ cdu_read_update_channel() {
     auto|apt|api) printf '%s' "$ch" ;;
     *) printf '%s' 'auto' ;;
   esac
+}
+
+# True when normalized semver $1 is greater than $2.
+cdu_semver_gt() {
+  local a b
+  a="$(cdu_normalize_semver "$1")"
+  b="$(cdu_normalize_semver "$2")"
+  [ -n "$a" ] && [ -n "$b" ] || return 1
+  [ "$a" = "$b" ] && return 1
+  if [ "${CURSOR_DEB_UPDATER_TEST_MODE:-0}" = 1 ]; then
+    [ "$(printf '%s\n%s\n' "$a" "$b" | sort -V | tail -n1)" = "$a" ]
+    return $?
+  fi
+  dpkg --compare-versions "$a" gt "$b"
+}
+
+# Pick install channel from probed versions. Prints apt|api.
+# Prefer apt when versions tie or only apt is known; api when only api is known.
+cdu_pick_channel_by_version() {
+  local apt_ver="${1:-}" api_ver="${2:-}"
+  local apt_n api_n
+  apt_n="$(cdu_normalize_semver "$apt_ver")"
+  api_n="$(cdu_normalize_semver "$api_ver")"
+  if [ -z "$apt_n" ] && [ -z "$api_n" ]; then
+    return 1
+  fi
+  if [ -z "$apt_n" ]; then
+    printf '%s' api
+    return 0
+  fi
+  if [ -z "$api_n" ]; then
+    printf '%s' apt
+    return 0
+  fi
+  if cdu_semver_gt "$api_n" "$apt_n"; then
+    printf '%s' api
+  else
+    # apt newer, or equal → prefer apt install path
+    printf '%s' apt
+  fi
+  return 0
 }
 
 cdu_apt_repo_configured() {
@@ -161,8 +202,8 @@ cdu_apt_policy_versions() {
   fi
   policy="$(apt-cache policy cursor 2>/dev/null || true)"
   [ -n "$policy" ] || return 1
-  inst="$(printf '%s\n' "$policy" | awk '/^\s*Installed:/{print $2; exit}')"
-  cand="$(printf '%s\n' "$policy" | awk '/^\s*Candidate:/{print $2; exit}')"
+  inst="$(printf '%s\n' "$policy" | awk '/^[[:space:]]*Installed:/{print $2; exit}')"
+  cand="$(printf '%s\n' "$policy" | awk '/^[[:space:]]*Candidate:/{print $2; exit}')"
   case "$inst" in ''|'(none)') return 1 ;; esac
   case "$cand" in ''|'(none)') return 1 ;; esac
   printf '%s\t%s' "$inst" "$cand"
@@ -179,7 +220,8 @@ cdu_apt_candidate_newer() {
   dpkg --compare-versions "$cand" gt "$inst"
 }
 
-# Resolve effective channel: apt | api
+# Resolve forced channel preference only (apt|api). For auto, callers probe both
+# versions and use cdu_pick_channel_by_version.
 cdu_resolve_update_channel() {
   local pref
   pref="$(cdu_read_update_channel)"
@@ -198,11 +240,8 @@ cdu_resolve_update_channel() {
       return 0
       ;;
     *)
-      if cdu_apt_repo_configured; then
-        printf '%s' apt
-      else
-        printf '%s' api
-      fi
+      # auto: deferred — caller compares apt vs API versions
+      printf '%s' auto
       return 0
       ;;
   esac

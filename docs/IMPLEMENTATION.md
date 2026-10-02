@@ -7,9 +7,11 @@ Unofficial glue around the official Cursor Linux `.deb`. Not affiliated with Any
 ### Check (user)
 
 1. **Packaging gate** — resolve the real Cursor binary (`/usr/share/cursor/cursor` or `dpkg -L cursor` desktop `Exec=`). `dpkg -S` must report package `cursor`. Exit 2 for non-deb installs.
-2. **Resolve channel** — `UPDATE_CHANNEL` from config (`auto` | `apt` | `api`). Default `auto`: use official aptrepo when `/etc/apt/sources.list.d/cursor*.sources` (or `.list`) points at `downloads.cursor.com/aptrepo`; otherwise download API.
-3. **Apt path** — read Installed/Candidate from `apt-cache policy cursor`. If Candidate is not newer (`dpkg --compare-versions`), relaunch and exit 0.
-4. **API path** — read installed version via `cursor --version`. Fetch release JSON (`RELEASE_TRACK`: `latest` or `stable`; platform `linux-x64` or `linux-arm64`). Validate resolved `.deb` URL against HTTPS allowlist (`www.cursor.com`, `cursor.com`, `api2.cursor.sh`, `downloads.cursor.com`). If already latest: relaunch and exit 0.
+2. **Resolve channel** — `UPDATE_CHANNEL` from config (`auto` | `apt` | `api`).
+   - `apt` / `api`: force that source.
+   - `auto` (default): probe aptrepo Candidate (when configured) and download API; pick the source with the newer normalized semver. Prefer apt when versions tie or only apt is known.
+3. **Installed version** — prefer apt `Installed` when available, else `cursor --version`.
+4. **Chosen source** — if Candidate/API version is not newer than installed (`cdu_semver_gt`), relaunch and exit 0.
 5. If update needed: invoke root install phase via sudo (interactive TTY prompt, or `sudo -n` when passwordless drop-in is configured). Pass resolved channel as install arg 12.
 
 ### Install (root, `--install`)
@@ -52,7 +54,7 @@ Config (`~/.config/cursor-deb-updater/config`):
 
 | Key | Values | Notes |
 |-----|--------|--------|
-| `UPDATE_CHANNEL` | `auto` (default), `apt`, `api` | `auto` prefers aptrepo when configured |
+| `UPDATE_CHANNEL` | `auto` (default), `apt`, `api` | `auto` picks newer of aptrepo vs download API (apt on tie) |
 | `RELEASE_TRACK` | `latest`, `stable` | Download API only |
 
 ## Deferred (not v0.1.x)

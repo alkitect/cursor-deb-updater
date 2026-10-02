@@ -12,7 +12,7 @@ Cursor ships a Linux `.deb`. On recent builds the package postinst also configur
 
 This kit checks for updates on launch (or from a terminal), installs them, and relaunches Cursor the way the app menu would, forwarding your Wayland/X11 session environment.
 
-By default it prefers apt when the Cursor aptrepo source is present (`apt-get update` + `apt-get install --only-upgrade cursor`). If that repo is missing, it falls back to Cursor's download API and a direct `.deb` install.
+By default it compares the Cursor aptrepo Candidate with the download API and installs from whichever reports the newer version (apt on a tie). If aptrepo is missing, it uses the download API only.
 
 Safe by default: install does not enable passwordless sudo or replace your `cursor.desktop`. Run verify first; opt in to launcher integration or NOPASSWD only when you want them.
 
@@ -115,7 +115,7 @@ cursor-deb-updater-ui terminal   # or silent / status
 Config file `~/.config/cursor-deb-updater/config`:
 
 ```bash
-UPDATE_CHANNEL=auto    # auto | apt | api  (auto prefers aptrepo when configured)
+UPDATE_CHANNEL=auto    # auto | apt | api  (auto picks newer of aptrepo vs API)
 RELEASE_TRACK=latest     # download API only: latest | stable
 ```
 
@@ -127,7 +127,7 @@ This is not affiliated with Anysphere or Cursor. It does not relicense Cursor an
 
 - Platform: official `.deb` on Debian/Ubuntu; packaging gate refuses snap/AppImage/Flatpak wrappers.
 - Kill-switch: uninstall glue; optionally `sudo rm /etc/sudoers.d/cursor-deb-updater`.
-- Defaults: apt-first when aptrepo is configured; HTTPS allowlist on API download URLs; interactive sudo when NOPASSWD is absent.
+- Defaults: compare aptrepo vs download API and install from the newer source; HTTPS allowlist on API download URLs; interactive sudo when NOPASSWD is absent.
 - Tradeoff: updates run `pkill -x cursor` before install (closes every Cursor window); apt metadata refresh can fail under PackageKit locks; API/CDN shape may change.
 - Optional: if a Chromium-flag launch wrapper exists next to the updater under `~/.local/bin`, relaunch uses it so host ozone flags still apply.
 - This GitHub repo is the release source for tagged releases. See [CONTRIBUTING.md](CONTRIBUTING.md).

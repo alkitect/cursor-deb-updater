@@ -145,24 +145,51 @@ grep -q '/usr/share/cursor/cursor --new-window' "${tmp}/.local/share/application
 
 grep -q 'cdu_resolve_update_channel' "${ROOT}/scripts/lib/common.sh" \
   || { echo "ci-check: missing apt channel resolver" >&2; exit 1; }
+grep -q 'cdu_pick_channel_by_version' "${ROOT}/scripts/lib/common.sh" \
+  || { echo "ci-check: missing version-based channel picker" >&2; exit 1; }
 grep -q 'install_cursor_via_apt' "${ROOT}/scripts/cursor-deb-updater" \
   || { echo "ci-check: missing apt install path" >&2; exit 1; }
 grep -q 'desktop_main_exec_is_updater' "${ROOT}/scripts/cursor-deb-updater" \
   || { echo "ci-check: missing gio-recursion guard" >&2; exit 1; }
 
-# Apt channel: repo present + newer Candidate → install path selected (test mode, no network).
+# Auto: apt Candidate ties API → prefer aptrepo install path.
 export CURSOR_DEB_UPDATER_TEST_APT_REPO=1
 export CURSOR_DEB_UPDATER_TEST_APT_INSTALLED=1.0.0-1
 export CURSOR_DEB_UPDATER_TEST_APT_CANDIDATE=9.9.9-2
+export CURSOR_DEB_UPDATER_TEST_LATEST=9.9.9
 printf 'UPDATE_CHANNEL=auto\nRELEASE_TRACK=latest\n' >"${XDG_CONFIG_HOME}/cursor-deb-updater/config"
 set +e
 out="$("${tmp}/.local/bin/cursor-deb-updater" --dry-run 2>&1)"
 rc_apt_dry=$?
 set -e
-[[ "${rc_apt_dry}" -eq 0 ]] || { echo "ci-check: apt dry-run failed (${rc_apt_dry}): ${out}" >&2; exit 1; }
+[[ "${rc_apt_dry}" -eq 0 ]] || { echo "ci-check: apt-tie dry-run failed (${rc_apt_dry}): ${out}" >&2; exit 1; }
 printf '%s\n' "${out}" | grep -qi aptrepo \
-  || { echo "ci-check: apt dry-run should mention aptrepo: ${out}" >&2; exit 1; }
+  || { echo "ci-check: equal versions should prefer aptrepo: ${out}" >&2; exit 1; }
+
+# Auto: API newer than apt Candidate → download API path.
+export CURSOR_DEB_UPDATER_TEST_APT_CANDIDATE=1.0.0-1
+export CURSOR_DEB_UPDATER_TEST_LATEST=9.9.9
+set +e
+out="$("${tmp}/.local/bin/cursor-deb-updater" --dry-run 2>&1)"
+rc_api_dry=$?
+set -e
+[[ "${rc_api_dry}" -eq 0 ]] || { echo "ci-check: api-newer dry-run failed (${rc_api_dry}): ${out}" >&2; exit 1; }
+printf '%s\n' "${out}" | grep -qi 'download API' \
+  || { echo "ci-check: newer API should pick download API: ${out}" >&2; exit 1; }
+
+# Auto: apt Candidate newer than API → aptrepo path.
+export CURSOR_DEB_UPDATER_TEST_APT_CANDIDATE=9.9.9-2
+export CURSOR_DEB_UPDATER_TEST_LATEST=2.0.0
+set +e
+out="$("${tmp}/.local/bin/cursor-deb-updater" --dry-run 2>&1)"
+rc_apt_win=$?
+set -e
+[[ "${rc_apt_win}" -eq 0 ]] || { echo "ci-check: apt-newer dry-run failed (${rc_apt_win}): ${out}" >&2; exit 1; }
+printf '%s\n' "${out}" | grep -qi aptrepo \
+  || { echo "ci-check: newer apt should pick aptrepo: ${out}" >&2; exit 1; }
+
 unset CURSOR_DEB_UPDATER_TEST_APT_REPO CURSOR_DEB_UPDATER_TEST_APT_INSTALLED CURSOR_DEB_UPDATER_TEST_APT_CANDIDATE
+export CURSOR_DEB_UPDATER_TEST_LATEST=9.9.9
 printf 'UPDATE_CHANNEL=auto\nRELEASE_TRACK=latest\n' >"${XDG_CONFIG_HOME}/cursor-deb-updater/config"
 
 "${ROOT}/scripts/uninstall-from-local.sh"
